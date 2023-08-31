@@ -198,10 +198,12 @@ version = "0.0.1"
 dependencies = [
  "candid",
  "ciborium",
+ "ic-canister-log",
  "ic-cdk",
  "ic-cdk-macros",
  "ic-cdk-timers",
  "ic-stable-structures",
+ "icrc-ledger-types",
  "num-traits",
  "proptest",
  "rustic",
@@ -491,6 +493,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "ic-canister-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb82c4f617ecff6e452fe65af0489626ec7330ffe3eedd9ea14e6178eea48d1a"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "ic-cdk"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -542,6 +553,20 @@ name = "ic0"
 version = "0.18.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "576c539151d4769fb4d1a0c25c4108dd18facd04c5695b02cf2d226ab4e43aa5"
+
+[[package]]
+name = "icrc-ledger-types"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fc953064d6d5a6237b845883163d3be8b4bf3bb153764488cef4ca31661ad74"
+dependencies = [
+ "candid",
+ "hex",
+ "num-traits",
+ "serde",
+ "serde_bytes",
+ "sha2",
+]
 
 [[package]]
 name = "indexmap"
