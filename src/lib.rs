@@ -1,3 +1,7 @@
+
+#![allow(clippy::unwrap_used)]
+#![allow(unused_imports)]
+
 use candid::{candid_method, CandidType, Decode, Encode, Nat, Principal};
 use ic_canister_log::{declare_log_buffer, export};
 use ic_cdk::api::call::CallResult;
@@ -35,9 +39,10 @@ pub struct CkicpConfig {
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
-pub struct CkicpMetadata {
+pub struct CkicpState {
     tecdsa_pubkey: String,
     tecdsa_address: [u8; 20],
+    total_icp_locked: Amount,
 }
 
 #[derive(CandidType, candid::Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -47,4 +52,51 @@ pub enum ReturnError {
     Unauthorized,
     Expired,
     InterCanisterCallError,
+}
+
+const CKICP_CONFIG_SIZE: u64 = 1;
+const CKICP_STATE_SIZE: u64 = 1;
+
+const CKICP_CONFIG_PAGE_START: u64 = USER_PAGE_START;
+const CKICP_CONFIG_PAGE_END: u64 = CKICP_CONFIG_PAGE_START + CKICP_CONFIG_SIZE;
+const CKICP_STATE_PAGE_START: u64 = CKICP_CONFIG_PAGE_END;
+const CKICP_STATE_PAGE_END: u64 = CKICP_STATE_PAGE_START + CKICP_STATE_SIZE;
+
+thread_local! {
+
+    static CKICP_CONFIG: RefCell<StableCell<Cbor<Option<CkicpConfig>>, RM>> =
+        RefCell::new(StableCell::init(
+            RM::new(DefaultMemoryImpl::default(), CKICP_CONFIG_PAGE_START..CKICP_CONFIG_PAGE_END),
+            Cbor::default(),
+        ).expect("failed to initialize")
+    );
+
+    static CKICP_STATE: RefCell<StableCell<Cbor<Option<CkicpState>>, RM>> =
+        RefCell::new(StableCell::init(
+            RM::new(DefaultMemoryImpl::default(), CKICP_STATE_PAGE_START..CKICP_STATE_PAGE_END),
+            Cbor::default(),
+        ).expect("failed to initialize")
+    );
+}
+
+
+#[init]
+pub fn init() {
+
+}
+
+#[query]
+pub fn get_ckicp_config() -> CkicpConfig {
+    CKICP_CONFIG.with(|ckicp_config| {
+        let ckicp_config = ckicp_config.borrow();
+        ckicp_config.get().0.clone().unwrap()
+    })
+}
+
+#[query]
+pub fn get_ckicp_state() -> CkicpState {
+    CKICP_STATE.with(|ckicp_state| {
+        let ckicp_state = ckicp_state.borrow();
+        ckicp_state.get().0.clone().unwrap()
+    })
 }
