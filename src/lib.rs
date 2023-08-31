@@ -45,6 +45,40 @@ pub struct CkicpState {
     total_icp_locked: Amount,
 }
 
+#[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
+pub struct EcdsaSignature {
+    r: [u8; 32],
+    s: [u8; 32],
+    v: u8,
+}
+
+impl Storable for EcdsaSignature {
+    fn from_bytes(bytes: Cow<[u8]>) -> Self {
+        let mut bytes = bytes.into_owned();
+        let v = bytes.split_off(64);
+        let s = bytes.split_off(32);
+        Self {
+            r: bytes.try_into().unwrap(),
+            s: s.try_into().unwrap(),
+            v: v[0],
+        }
+    }
+
+    fn to_bytes(&self) -> Cow<[u8]> {
+        let mut bytes = Vec::with_capacity(65);
+        bytes.extend_from_slice(&self.r);
+        bytes.extend_from_slice(&self.s);
+        bytes.push(self.v);
+        bytes.into()
+    }
+}
+
+impl BoundedStorable for EcdsaSignature {
+    const MAX_SIZE: u32 = 100;
+    const IS_FIXED_SIZE: bool = true;
+}
+
+
 #[derive(CandidType, candid::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ReturnError {
     GenericError,
@@ -62,6 +96,8 @@ const CKICP_CONFIG_PAGE_END: u64 = CKICP_CONFIG_PAGE_START + CKICP_CONFIG_SIZE;
 const CKICP_STATE_PAGE_START: u64 = CKICP_CONFIG_PAGE_END;
 const CKICP_STATE_PAGE_END: u64 = CKICP_STATE_PAGE_START + CKICP_STATE_SIZE;
 
+const SIGNATURE_MAP_MEM_ID: MemoryId = MemoryId::new(0);
+
 thread_local! {
 
     static CKICP_CONFIG: RefCell<StableCell<Cbor<Option<CkicpConfig>>, RM>> =
@@ -77,6 +113,12 @@ thread_local! {
             Cbor::default(),
         ).expect("failed to initialize")
     );
+
+    // map (caller, nonce) -> signature
+    static SIGNATURE_MAP: RefCell<StableBTreeMap<([u8;32], u32), EcdsaSignature, VM>> =
+        MEMORY_MANAGER.with(|mm| {
+            RefCell::new(StableBTreeMap::init(mm.borrow().get(SIGNATURE_MAP_MEM_ID)))
+    });
 }
 
 
@@ -100,3 +142,19 @@ pub fn get_ckicp_state() -> CkicpState {
         ckicp_state.get().0.clone().unwrap()
     })
 }
+
+#[update]
+pub fn mint_ckicp(amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSignature, ReturnError> {
+    let caller = ic_cdk::caller();
+    let config: CkicpConfig = get_ckicp_config();
+
+    // Generate tECDSA signature
+
+    // Add signature to map for future queries
+
+    // Return tECDSA signature
+    unimplemented!();
+
+}
+
+
