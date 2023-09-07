@@ -15,11 +15,7 @@ ic-cdk-macros = "0.6.0"
 ic-cdk-timers = "0.3.0"
 ic-stable-structures = "0.5.4"
 icrc-ledger-types = "0.1.0"
-k256 = { version = "0.13.1", default_features = false, features = [
-  "arithmetic",
-  "ecdsa",
-  "pkcs8",
-] }
+k256 = { version = "0.13.1", default_features = false }
 p256 = { version = "0.13.2", default_features = false, features = [
   "arithmetic",
   "ecdsa",
@@ -27,7 +23,9 @@ p256 = { version = "0.13.2", default_features = false, features = [
   "pkcs8",
 ] } 
 num-traits = "0.2.15"
+rustic = "0.1.0"
 serde = "1.0.164"
 serde_bytes = "0.11.9"
 serde_json = "1.0.105"
-rustic = { version = "0.0.1", features = ["access-roles", "reentrancy", "lifecycle"] }
+zeroize = "1.6.0"
+

@@ -15,11 +15,12 @@ ic-cdk.workspace = true
 ic-cdk-macros.workspace = true
 ic-stable-structures.workspace = true
 icrc-ledger-types.workspace = true
-k256.workspace = true
+k256 = { workspace = true, default_features = false, features = ["arithmetic", "ecdsa"] }
 num-traits.workspace = true
 rustic = { workspace = true, features = ["access", "pausable", "reentrancy", "lifecycle"] }
 serde = {workspace = true, features = ["derive"] }
 serde_bytes.workspace = true
+zeroize = { workspace = true , features = ["zeroize_derive"] }
 
 
 
