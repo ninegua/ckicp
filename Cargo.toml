@@ -1,33 +1,33 @@
-[package]
-name = "ckicp"
-version = "0.0.1"
-authors = ["Benji Zhai"]
-edition = "2021"
-rust-version = "1.65.0"
-#build = "build.rs"
-license = "MIT"
-repository = "https://github.com/benjizhai/ckicp/"
+[workspace]
+members = [
+    # "rs/eth_state",
+    "rs/minter"
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[lib]
-crate-type = ["cdylib"]
-
-
-[dependencies]
+[workspace.dependencies]
 candid = "0.8.4"
 ciborium = "0.2.0"
+ethnum = "1.4.0"
+hex = "0.4.3"
 ic-canister-log = "0.2.0"
 ic-cdk = "0.9.2"
 ic-cdk-macros = "0.6.0"
-ic-stable-structures = "0.5.4"
 ic-cdk-timers = "0.3.0"
+ic-stable-structures = "0.5.4"
 icrc-ledger-types = "0.1.0"
+k256 = { version = "0.13.1", default_features = false, features = [
+  "arithmetic",
+  "ecdsa",
+  "pkcs8",
+] }
+p256 = { version = "0.13.2", default_features = false, features = [
+  "arithmetic",
+  "ecdsa",
+  "pem",
+  "pkcs8",
+] } 
 num-traits = "0.2.15"
 serde = "1.0.164"
 serde_bytes = "0.11.9"
+serde_json = "1.0.105"
 rustic = { version = "0.0.1", features = ["access-roles", "reentrancy", "lifecycle"] }
-
-
-[dev-dependencies]
-proptest = "1.2.0"

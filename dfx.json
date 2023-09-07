@@ -1,0 +1,18 @@
+{
+  "canisters": {
+    "minter": {
+      "type":"custom",
+      "candid": ".src/minter/minter.did",
+      "build": ["sh ./src/minter/build.sh"],
+      "wasm": "./target/wasm32-unknown-unknown/release/minter-opt.wasm.gz"
+    },
+    "wlicp_minter": {
+      "type":"custom",
+      "candid": ".src/eth_state/eth_state.did",
+      "build": ["sh ./src/eth_state/build.sh"],
+      "wasm": "./target/wasm32-unknown-unknown/release/eth-state-opt.wasm.gz"
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}

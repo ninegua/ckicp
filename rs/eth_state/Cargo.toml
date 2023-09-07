@@ -1,0 +1,23 @@
+[package]
+name = "eth_state"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+candid.workspace = true
+ciborium.workspace = true
+hex.workspace = true
+ic-cdk.workspace = true
+ic-cdk-macros.workspace = true
+ic-stable-structures.workspace = true
+rustic = { workspace = true, features = ["access", "pausable", "reentrancy", "lifecycle"] }
+serde = {workspace = true, features = ["derive"] }
+num-traits.workspace = true
+
+
+
+[dev-dependencies]
+proptest = "1.2.0"
