@@ -140,6 +140,8 @@ pub fn mint_ckicp(amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSig
     let caller = ic_cdk::caller();
     let config: CkicpConfig = get_ckicp_config();
 
+    // ICRC-2 transfer
+
     // Generate tECDSA signature
 
     // Add signature to map for future queries
