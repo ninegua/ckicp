@@ -242,6 +242,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "ckicp-minter"
+version = "0.1.0"
+dependencies = [
+ "candid 0.8.4",
+ "ciborium",
+ "hex",
+ "ic-canister-log",
+ "ic-cdk",
+ "ic-cdk-macros",
+ "ic-stable-structures",
+ "icrc-ledger-types",
+ "k256",
+ "num-traits",
+ "proptest",
+ "rustic",
+ "serde",
+ "serde_bytes",
+ "zeroize",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -910,27 +931,6 @@ name = "memchr"
 version = "2.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5486aed0026218e61b8a01d5fbd5a0a134649abb71a0e53b7bc088529dced86e"
-
-[[package]]
-name = "minter"
-version = "0.1.0"
-dependencies = [
- "candid 0.8.4",
- "ciborium",
- "hex",
- "ic-canister-log",
- "ic-cdk",
- "ic-cdk-macros",
- "ic-stable-structures",
- "icrc-ledger-types",
- "k256",
- "num-traits",
- "proptest",
- "rustic",
- "serde",
- "serde_bytes",
- "zeroize",
-]
 
 [[package]]
 name = "new_debug_unreachable"

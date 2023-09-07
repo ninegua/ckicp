@@ -1,10 +1,11 @@
 [package]
-name = "minter"
+name = "ckicp-minter"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-crate-type = ["cdylib"]
+[[bin]]
+name = "ckicp-minter"
+path = "src/main.rs"
 
 [dependencies]
 candid.workspace = true
