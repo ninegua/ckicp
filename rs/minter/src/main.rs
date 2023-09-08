@@ -101,6 +101,7 @@ pub fn get_nonce() -> u32 {
     })
 }
 
+/// Nonce starts at 1 and is incremented for each call to mint_ckicp
 /// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce)) 
 /// and does not need to be returned.
 /// ICP is transferred using ICRC-2 approved transfer
