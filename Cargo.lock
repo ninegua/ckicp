@@ -259,6 +259,7 @@ dependencies = [
  "rustic",
  "serde",
  "serde_bytes",
+ "sha2",
  "zeroize",
 ]
 

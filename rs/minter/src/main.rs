@@ -3,6 +3,8 @@
 #![allow(unused_imports)]
 
 use ckicp_minter::crypto::EcdsaSignature;
+use ckicp_minter::memory::*;
+use ckicp_minter::utils::*;
 
 use candid::{candid_method, CandidType, Decode, Encode, Nat, Principal};
 use ic_canister_log::{declare_log_buffer, export};
@@ -43,21 +45,7 @@ use icrc_ledger_types::icrc1::account::{Account, Subaccount};
 use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 
 type Amount = u64;
-
-#[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
-pub struct CkicpConfig {
-    ckicp_canister_id: Principal,
-    ckicp_eth_address: [u8; 20],
-    ckicp_fee: Amount,
-}
-
-#[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
-pub struct CkicpState {
-    tecdsa_pubkey: String,
-    tecdsa_signer_address: [u8; 20],
-    total_icp_locked: Amount,
-}
-
+type MsgId = u128;
 
 
 
@@ -70,45 +58,6 @@ pub enum ReturnError {
     InterCanisterCallError,
 }
 
-const CKICP_CONFIG_SIZE: u64 = 1;
-const CKICP_STATE_SIZE: u64 = 1;
-
-const CKICP_CONFIG_PAGE_START: u64 = USER_PAGE_START;
-const CKICP_CONFIG_PAGE_END: u64 = CKICP_CONFIG_PAGE_START + CKICP_CONFIG_SIZE;
-const CKICP_STATE_PAGE_START: u64 = CKICP_CONFIG_PAGE_END;
-const CKICP_STATE_PAGE_END: u64 = CKICP_STATE_PAGE_START + CKICP_STATE_SIZE;
-
-const MSGID_MAP_MEM_ID: MemoryId = MemoryId::new(0);
-const SIGNATURE_MAP_MEM_ID: MemoryId = MemoryId::new(1);
-
-thread_local! {
-
-    static CKICP_CONFIG: RefCell<StableCell<Cbor<Option<CkicpConfig>>, RM>> =
-        RefCell::new(StableCell::init(
-            RM::new(DefaultMemoryImpl::default(), CKICP_CONFIG_PAGE_START..CKICP_CONFIG_PAGE_END),
-            Cbor::default(),
-        ).expect("failed to initialize")
-    );
-
-    static CKICP_STATE: RefCell<StableCell<Cbor<Option<CkicpState>>, RM>> =
-        RefCell::new(StableCell::init(
-            RM::new(DefaultMemoryImpl::default(), CKICP_STATE_PAGE_START..CKICP_STATE_PAGE_END),
-            Cbor::default(),
-        ).expect("failed to initialize")
-    );
-
-    // map (caller, nonce) -> msgid
-    static MSGID_MAP: RefCell<StableBTreeMap<([u8;32], u32), u32, VM>> =
-        MEMORY_MANAGER.with(|mm| {
-            RefCell::new(StableBTreeMap::init(mm.borrow().get(MSGID_MAP_MEM_ID)))
-    });
-
-    // map msgid -> signature
-    static SIGNATURE_MAP: RefCell<StableBTreeMap<u32, EcdsaSignature, VM>> =
-        MEMORY_MANAGER.with(|mm| {
-            RefCell::new(StableBTreeMap::init(mm.borrow().get(SIGNATURE_MAP_MEM_ID)))
-    });
-}
 
 fn main() {}
 
@@ -135,9 +84,27 @@ pub fn get_ckicp_state() -> CkicpState {
     })
 }
 
+#[query]
+pub fn get_nonce() -> u32 {
+    let caller = ic_cdk::caller();
+    let caller_subaccount = subaccount_from_principal(&caller);
+    NONCE_MAP.with(|nonce_map| {
+        let nonce_map = nonce_map.borrow();
+        nonce_map.get(&caller_subaccount).unwrap_or(0)
+    })
+}
+
+/// MsgId is computed as xor_nibbles(keccak256(caller, nonce))
 #[update]
 pub fn mint_ckicp(amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSignature, ReturnError> {
+    let _guard = ReentrancyGuard::new();
     let caller = ic_cdk::caller();
+    let caller_subaccount = subaccount_from_principal(&caller);
+    NONCE_MAP.with(|nonce_map| {
+        let mut nonce_map = nonce_map.borrow_mut();
+        let nonce = nonce_map.get(&caller_subaccount).unwrap_or(0) + 1;
+        nonce_map.insert(caller_subaccount, nonce);
+    });
     let config: CkicpConfig = get_ckicp_config();
 
     // ICRC-2 transfer

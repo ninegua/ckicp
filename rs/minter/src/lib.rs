@@ -1,3 +1,4 @@
 pub mod crypto;
-mod memory;
+pub mod memory;
+pub mod utils;
 

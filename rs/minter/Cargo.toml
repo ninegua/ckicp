@@ -21,6 +21,7 @@ num-traits.workspace = true
 rustic = { workspace = true, features = ["access", "pausable", "reentrancy", "lifecycle"] }
 serde = {workspace = true, features = ["derive"] }
 serde_bytes.workspace = true
+sha2.workspace = true
 zeroize = { workspace = true , features = ["zeroize_derive"] }
 
 
