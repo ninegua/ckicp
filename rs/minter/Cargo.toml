@@ -8,6 +8,7 @@ name = "ckicp-minter"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 candid.workspace = true
 # candid_derive.workspace = true
 ciborium.workspace = true

@@ -1,4 +1,3 @@
-
 #![allow(clippy::unwrap_used)]
 #![allow(unused_imports)]
 
@@ -9,12 +8,12 @@ use ckicp_minter::utils::*;
 use candid::{candid_method, CandidType, Decode, Encode, Nat, Principal};
 use ic_canister_log::{declare_log_buffer, export};
 use ic_cdk::api::call::CallResult;
+use ic_cdk::api::management_canister::ecdsa::EcdsaPublicKeyResponse;
 use ic_cdk_macros::{init, post_upgrade, pre_upgrade, query, update};
 use ic_stable_structures::memory_manager::MemoryId;
 use ic_stable_structures::{
     BoundedStorable, DefaultMemoryImpl, StableBTreeMap, StableCell, StableVec, Storable,
 };
-use ic_cdk::api::management_canister::ecdsa::EcdsaPublicKeyResponse;
 
 use rustic::access_control::*;
 use rustic::default_memory_map::*;
@@ -24,6 +23,7 @@ use rustic::types::*;
 use rustic::utils::*;
 
 use serde_bytes::ByteBuf;
+use sha2::{Digest, Sha256};
 use zeroize::ZeroizeOnDrop;
 
 use std::borrow::Cow;
@@ -32,13 +32,12 @@ use std::convert::From;
 use std::time::Duration;
 
 use k256::{
+    ecdsa::VerifyingKey,
     elliptic_curve::{
         generic_array::{typenum::Unsigned, GenericArray},
         Curve,
     },
-    Secp256k1,
-    PublicKey,
-    ecdsa::VerifyingKey,
+    PublicKey, Secp256k1,
 };
 
 use icrc_ledger_types::icrc1::account::{Account, Subaccount};
@@ -47,8 +46,6 @@ use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromErro
 
 type Amount = u64;
 type MsgId = u128;
-
-
 
 #[derive(CandidType, candid::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ReturnError {
@@ -59,21 +56,19 @@ pub enum ReturnError {
     InterCanisterCallError,
 }
 
-
 fn main() {}
 
 #[init]
 pub fn init() {
-   rustic::rustic_init();
+    rustic::rustic_init();
 }
 
 #[post_upgrade]
-pub fn post_upgrade () {
+pub fn post_upgrade() {
     rustic::rustic_post_upgrade(false, false, false);
 
     // post upgrade code for your canister
 }
-
 
 #[query]
 pub fn get_ckicp_config() -> CkicpConfig {
@@ -102,11 +97,15 @@ pub fn get_nonce() -> u32 {
 }
 
 /// Nonce starts at 1 and is incremented for each call to mint_ckicp
-/// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce)) 
+/// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce))
 /// and does not need to be returned.
 /// ICP is transferred using ICRC-2 approved transfer
 #[update]
-pub async fn mint_ckicp(from_subaccount: Subaccount, amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSignature, ReturnError> {
+pub async fn mint_ckicp(
+    from_subaccount: Subaccount,
+    amount: Amount,
+    target_eth_wallet: [u8; 20],
+) -> Result<EcdsaSignature, ReturnError> {
     let _guard = ReentrancyGuard::new();
     let caller = ic_cdk::caller();
     let caller_subaccount = subaccount_from_principal(&caller);
@@ -116,18 +115,37 @@ pub async fn mint_ckicp(from_subaccount: Subaccount, amount: Amount, target_eth_
         nonce_map.insert(caller_subaccount, nonce);
         nonce
     });
-    let msgid = calc_msgid(&caller_subaccount, nonce);
-    let now = ic_cdk::api::time();
+    let msg_id = calc_msgid(&caller_subaccount, nonce);
     let config: CkicpConfig = get_ckicp_config();
+    let now = ic_cdk::api::time();
+    let expiry = now / 1_000_000_000 + config.expiry_seconds;
+
+    STATUS_MAP.with(|sm| {
+        let mut sm = sm.borrow_mut();
+        sm.insert(
+            msg_id,
+            MintStatus {
+                amount,
+                expiry,
+                state: MintState::Init,
+            },
+        );
+    });
 
     // ICRC-2 transfer
     let tx_args = TransferFromArgs {
         spender_subaccount: None,
-        from: Account { owner: caller, subaccount: Some(from_subaccount) },
-        to: Account { owner: config.ckicp_canister_id, subaccount: None},
+        from: Account {
+            owner: caller,
+            subaccount: Some(from_subaccount),
+        },
+        to: Account {
+            owner: config.ckicp_canister_id,
+            subaccount: None,
+        },
         amount: Nat::from(amount),
         fee: None,
-        memo: Some(Memo::from(msgid.to_be_bytes().to_vec())),
+        memo: Some(Memo::from(msg_id.to_be_bytes().to_vec())),
         created_at_time: Some(now),
     };
     let tx_result: Result<Nat, TransferFromError> = canister_call(
@@ -139,17 +157,44 @@ pub async fn mint_ckicp(from_subaccount: Subaccount, amount: Amount, target_eth_
     )
     .await
     .map_err(|_| ReturnError::InterCanisterCallError)?;
-    
+
+    match tx_result {
+        Ok(_) => {
+            STATUS_MAP.with(|sm| {
+                let mut sm = sm.borrow_mut();
+                sm.insert(
+                    msg_id,
+                    MintStatus {
+                        amount,
+                        expiry,
+                        state: MintState::FundReceived,
+                    },
+                );
+            });
+        }
+        Err(_) => return Err(ReturnError::InterCanisterCallError),
+    }
+
     // Generate tECDSA signature
+    // payload is (amount, to, msgId, expiry, chainId, ckicp_eth_address)
+    let amount_to_transfer = amount - config.ckicp_fee;
+    let mut payload_to_sign: [u8; 192] = [0; 192];
+    payload_to_sign[0..32].copy_from_slice(&amount_to_transfer.to_be_bytes());
+    payload_to_sign[32..64].copy_from_slice(&target_eth_wallet);
+    payload_to_sign[64..96].copy_from_slice(&msg_id.to_be_bytes());
+    payload_to_sign[96..128].copy_from_slice(&expiry.to_be_bytes());
+    payload_to_sign[128..160].copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
+    payload_to_sign[160..192].copy_from_slice(&config.ckicp_eth_address);
+
+    let mut hasher = Sha256::new();
+    hasher.update(payload_to_sign);
+    let hashed = hasher.finalize();
 
     // Add signature to map for future queries
 
     // Return tECDSA signature
     unimplemented!();
-
 }
-
-
 
 /// An ECDSA private key
 #[derive(Clone, ZeroizeOnDrop)]
@@ -166,7 +211,6 @@ impl PrivateKey {
     pub fn serialize_sec1(&self) -> Vec<u8> {
         self.key.to_bytes().to_vec()
     }
-
 
     /// Sign a message
     ///
@@ -199,6 +243,5 @@ impl PrivateKey {
     pub fn public_key(&self) -> PublicKey {
         let key = VerifyingKey::from(&self.key);
         PublicKey::from(&key)
-        
     }
 }

@@ -1,14 +1,13 @@
-use candid::{CandidType, Principal, Encode, Decode};
+use candid::{CandidType, Decode, Encode, Principal};
 use ic_stable_structures::memory_manager::MemoryId;
 use ic_stable_structures::DefaultMemoryImpl;
-use std::cell::RefCell;
-use std::borrow::Cow;
-use ic_stable_structures::{StableCell, StableVec, Storable, BoundedStorable, StableBTreeMap};
+use ic_stable_structures::{BoundedStorable, StableBTreeMap, StableCell, StableVec, Storable};
 use rustic::default_memory_map::MEMORY_MANAGER;
-use rustic::types::{RM, VM, Cbor};
+use rustic::types::{Cbor, RM, VM};
+use std::borrow::Cow;
+use std::cell::RefCell;
 
 use crate::crypto::EcdsaSignature;
-
 
 type Amount = u64;
 type MsgId = u128;
@@ -17,8 +16,10 @@ type MsgId = u128;
 pub struct CkicpConfig {
     pub ckicp_canister_id: Principal,
     pub ledger_canister_id: Principal,
-    pub ckicp_eth_address: [u8; 20],
+    pub ckicp_eth_address: [u8; 20], // Deploy using CREATE2 to get the same address
     pub ckicp_fee: Amount,
+    pub expiry_seconds: u64,
+    pub target_chain_ids: Vec<u8>,
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
@@ -28,7 +29,9 @@ pub struct CkicpState {
     pub total_icp_locked: Amount,
 }
 
-#[derive(CandidType, serde::Serialize, serde::Deserialize, Default, Clone, Debug, PartialEq, Eq)]
+#[derive(
+    CandidType, serde::Serialize, serde::Deserialize, Default, Clone, Debug, PartialEq, Eq,
+)]
 pub enum MintState {
     #[default]
     Init,
@@ -68,7 +71,6 @@ impl BoundedStorable for MintState {
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct MintStatus {
-    pub msg_id: MsgId,
     pub amount: Amount,
     pub expiry: u64, // seconds since UNIX epoch
     pub state: MintState,
@@ -89,7 +91,7 @@ impl BoundedStorable for MintStatus {
     const IS_FIXED_SIZE: bool = false;
 }
 
-const CKICP_CONFIG_SIZE: u64 = 1;
+const CKICP_CONFIG_SIZE: u64 = 4;
 const CKICP_STATE_SIZE: u64 = 1;
 
 const CKICP_CONFIG_PAGE_START: u64 = rustic::default_memory_map::USER_PAGE_START;
@@ -135,5 +137,3 @@ thread_local! {
             RefCell::new(StableBTreeMap::init(mm.borrow().get(SIGNATURE_MAP_MEM_ID)))
     });
 }
-
-

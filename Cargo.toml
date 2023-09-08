@@ -5,6 +5,7 @@ members = [
 ]
 
 [workspace.dependencies]
+async-trait = "0.1.73"
 candid = { version = "0.9.5", features = ["parser"] }
 # candid_derive = "0.6.3"
 ciborium = "0.2.0"
