@@ -105,7 +105,7 @@ pub fn get_nonce() -> u32 {
 /// and does not need to be returned.
 /// ICP is transferred using ICRC-2 approved transfer
 #[update]
-pub fn mint_ckicp(from_subaccount: Subaccount, amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSignature, ReturnError> {
+pub async fn mint_ckicp(from_subaccount: Subaccount, amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSignature, ReturnError> {
     let _guard = ReentrancyGuard::new();
     let caller = ic_cdk::caller();
     let caller_subaccount = subaccount_from_principal(&caller);
@@ -129,6 +129,16 @@ pub fn mint_ckicp(from_subaccount: Subaccount, amount: Amount, target_eth_wallet
         memo: Some(Memo::from(msgid.to_be_bytes().to_vec())),
         created_at_time: Some(now),
     };
+    let tx_result: Result<Nat, TransferFromError> = canister_call(
+        config.ledger_canister_id,
+        "icrc2_transfer_from",
+        tx_args,
+        candid::encode_one,
+        |r| candid::decode_one(r),
+    )
+    .await
+    .map_err(|_| ReturnError::InterCanisterCallError)?;
+    
     // Generate tECDSA signature
 
     // Add signature to map for future queries

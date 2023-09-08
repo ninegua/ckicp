@@ -13,6 +13,7 @@ type MsgId = u128;
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct CkicpConfig {
     pub ckicp_canister_id: Principal,
+    pub ledger_canister_id: Principal,
     pub ckicp_eth_address: [u8; 20],
     pub ckicp_fee: Amount,
 }
