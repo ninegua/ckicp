@@ -34,3 +34,15 @@ impl BoundedStorable for EcdsaSignature {
     const MAX_SIZE: u32 = 65;
     const IS_FIXED_SIZE: bool = true;
 }
+
+impl EcdsaSignature {
+    pub fn from_sec1(bytes: &[u8]) -> Self {
+        let mut bytes = bytes.to_vec();
+        let s = bytes.split_off(32);
+        Self {
+            r: bytes.try_into().unwrap(),
+            s: s.try_into().unwrap(),
+            v: 0,
+        }
+    }
+}

@@ -195,57 +195,19 @@ pub async fn mint_ckicp(
     update_status(msg_id, amount, expiry, MintState::Signed);
 
     // Add signature to map for future queries
+    // SIGNATURE_MAP.with(|sm| {
+    //     let mut sm = sm.borrow_mut();
+    //     sm.insert(
+    //         msg_id,
+    //         EcdsaSignature {
+    //             r: signature[0..32],
+    //             s: signature[32..64],
+    //             v: signature[64],
+    //         },
+    //     );
+    // });
 
     // Return tECDSA signature
     unimplemented!();
 }
 
-/// An ECDSA private key
-#[derive(Clone, ZeroizeOnDrop)]
-pub struct PrivateKey {
-    key: k256::ecdsa::SigningKey,
-}
-
-impl PrivateKey {
-    /// Serialize the private key to a simple bytestring
-    ///
-    /// This uses the SEC1 encoding, which is just the representation
-    /// of the secret integer in a 32-byte array, encoding it using
-    /// big-endian notation.
-    pub fn serialize_sec1(&self) -> Vec<u8> {
-        self.key.to_bytes().to_vec()
-    }
-
-    /// Sign a message
-    ///
-    /// The message is hashed with SHA-256 and the signature is
-    /// normalized (using the minimum-s approach of BitCoin)
-    pub fn sign_message(&self, message: &[u8]) -> [u8; 64] {
-        use k256::ecdsa::{signature::Signer, Signature};
-        let sig: Signature = self.key.sign(message);
-        sig.to_bytes().into()
-    }
-
-    /// Sign a message digest
-    ///
-    /// The signature is normalized (using the minimum-s approach of BitCoin)
-    pub fn sign_digest(&self, digest: &[u8]) -> Option<[u8; 64]> {
-        if digest.len() < 16 {
-            // k256 arbitrarily rejects digests that are < 128 bits
-            return None;
-        }
-
-        use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature};
-        let sig: Signature = self
-            .key
-            .sign_prehash(digest)
-            .expect("Failed to sign digest");
-        Some(sig.to_bytes().into())
-    }
-
-    /// Return the public key cooresponding to this private key
-    pub fn public_key(&self) -> PublicKey {
-        let key = VerifyingKey::from(&self.key);
-        PublicKey::from(&key)
-    }
-}
