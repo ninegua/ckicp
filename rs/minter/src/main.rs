@@ -3,6 +3,7 @@
 
 use ckicp_minter::crypto::EcdsaSignature;
 use ckicp_minter::memory::*;
+use ckicp_minter::tecdsa::{ManagementCanister, SignWithECDSAReply};
 use ckicp_minter::utils::*;
 
 use candid::{candid_method, CandidType, Decode, Encode, Nat, Principal};
@@ -54,6 +55,7 @@ pub enum ReturnError {
     Unauthorized,
     Expired,
     InterCanisterCallError,
+    TecdsaSignatureError,
 }
 
 fn main() {}
@@ -120,18 +122,21 @@ pub async fn mint_ckicp(
     let now = ic_cdk::api::time();
     let expiry = now / 1_000_000_000 + config.expiry_seconds;
 
-    STATUS_MAP.with(|sm| {
-        let mut sm = sm.borrow_mut();
-        sm.insert(
-            msg_id,
-            MintStatus {
-                amount,
-                expiry,
-                state: MintState::Init,
-            },
-        );
-    });
+    fn update_status(msg_id: MsgId, amount: Amount, expiry: u64, state: MintState) {
+        STATUS_MAP.with(|sm| {
+            let mut sm = sm.borrow_mut();
+            sm.insert(
+                msg_id,
+                MintStatus {
+                    amount,
+                    expiry,
+                    state,
+                },
+            );
+        });
+    }
 
+    update_status(msg_id, amount, expiry, MintState::Init);
     // ICRC-2 transfer
     let tx_args = TransferFromArgs {
         spender_subaccount: None,
@@ -160,17 +165,7 @@ pub async fn mint_ckicp(
 
     match tx_result {
         Ok(_) => {
-            STATUS_MAP.with(|sm| {
-                let mut sm = sm.borrow_mut();
-                sm.insert(
-                    msg_id,
-                    MintStatus {
-                        amount,
-                        expiry,
-                        state: MintState::FundReceived,
-                    },
-                );
-            });
+            update_status(msg_id, amount, expiry, MintState::FundReceived);
         }
         Err(_) => return Err(ReturnError::InterCanisterCallError),
     }
@@ -189,6 +184,15 @@ pub async fn mint_ckicp(
     let mut hasher = Sha256::new();
     hasher.update(payload_to_sign);
     let hashed = hasher.finalize();
+
+    let signature: Vec<u8> = {
+        let (res,): (SignWithECDSAReply,) = ManagementCanister::sign(hashed.to_vec())
+            .await
+            .map_err(|_| ReturnError::TecdsaSignatureError)?;
+        res.signature
+    };
+
+    update_status(msg_id, amount, expiry, MintState::Signed);
 
     // Add signature to map for future queries
 

@@ -1,11 +1,11 @@
-use async_trait::async_trait;
+
+use lazy_static::lazy_static;
 use candid::CandidType;
 use candid::Principal;
 use ic_cdk::api::call::{call_with_payment, CallResult};
 use ic_cdk::call;
 use serde::{Deserialize, Serialize};
 
-pub type CanisterId = candid::Principal;
 
 #[derive(CandidType, Serialize, Debug)]
 pub struct PublicKeyReply {
@@ -26,7 +26,7 @@ pub struct EcdsaKeyId {
 
 #[derive(CandidType, Serialize, Debug)]
 pub struct ECDSAPublicKey {
-    pub canister_id: Option<CanisterId>,
+    pub canister_id: Option<Principal>,
     pub derivation_path: Vec<Vec<u8>>,
     pub key_id: EcdsaKeyId,
 }
@@ -54,20 +54,20 @@ pub struct SignatureReply {
     pub signature: Vec<u8>,
 }
 
-#[async_trait]
-pub trait ManagementCanister {
-    async fn raw_rand(&self) -> CallResult<(Vec<u8>,)>;
-    async fn ecdsa_public_key(&self, canister_id: Principal) -> CallResult<(ECDSAPublicKeyReply,)>;
-    async fn sign(&self, message: Vec<u8>) -> CallResult<(SignWithECDSAReply,)>;
+#[derive(CandidType, Serialize, Debug)]
+pub struct ManagementCanister {}
+
+lazy_static! {
+    pub static ref MGMT_ID: Principal = Principal::from_text("aaaaa-aa").unwrap();
 }
 
-#[async_trait]
-impl ManagementCanister for Principal {
-    async fn raw_rand(&self) -> CallResult<(Vec<u8>,)> {
-        call(*self, "raw_rand", ()).await
+impl ManagementCanister {
+    
+    pub async fn raw_rand() -> CallResult<(Vec<u8>,)> {
+        call(*MGMT_ID, "raw_rand", ()).await
     }
 
-    async fn ecdsa_public_key(&self, canister_id: Principal) -> CallResult<(ECDSAPublicKeyReply,)> {
+    pub async fn ecdsa_public_key(canister_id: Principal) -> CallResult<(ECDSAPublicKeyReply,)> {
         let key_id = EcdsaKeyId {
             curve: EcdsaCurve::Secp256k1,
             name: "key_1".to_string(),
@@ -79,11 +79,11 @@ impl ManagementCanister for Principal {
             derivation_path: vec![],
             key_id: key_id.clone(),
         };
-        ic_cdk::println!("request {:?}", request);
-        call(*self, "ecdsa_public_key", (request,)).await
+        // ic_cdk::println!("request {:?}", request);
+        call(*MGMT_ID, "ecdsa_public_key", (request,)).await
     }
 
-    async fn sign(&self, message: Vec<u8>) -> CallResult<(SignWithECDSAReply,)> {
+    pub async fn sign(message: Vec<u8>) -> CallResult<(SignWithECDSAReply,)> {
         let key_id = EcdsaKeyId {
             curve: EcdsaCurve::Secp256k1,
             name: "key_1".to_string(),
@@ -95,6 +95,6 @@ impl ManagementCanister for Principal {
             derivation_path: vec![],
             key_id,
         };
-        call_with_payment(*self, "sign_with_ecdsa", (request,), 25_000_000_000).await
+        call_with_payment(*MGMT_ID, "sign_with_ecdsa", (request,), 25_000_000_000).await
     }
 }

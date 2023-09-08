@@ -23,7 +23,8 @@ p256 = { version = "0.13.2", default_features = false, features = [
   "ecdsa",
   "pem",
   "pkcs8",
-] } 
+] }
+lazy_static = "1.4.0" 
 num-traits = "0.2.15"
 rustic = "0.1.1"
 serde = "1.0.164"
