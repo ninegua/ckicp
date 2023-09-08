@@ -195,9 +195,9 @@ pub async fn mint_ckicp(
         res.signature
     };
 
-    
+    // TODO: Calculate `v`
 
-    // Add signature to map for future queries
+    // TODO: Add signature to map for future queries
     // SIGNATURE_MAP.with(|sm| {
     //     let mut sm = sm.borrow_mut();
     //     sm.insert(
@@ -260,4 +260,34 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
         Err(_) => {Err(ReturnError::TransferError)}
     }
 
+}
+
+#[query]
+pub fn get_signature(msg_id: MsgId) -> Option<EcdsaSignature> {
+    SIGNATURE_MAP.with(|sm| {
+        let sm = sm.borrow();
+        sm.get(&msg_id).clone()
+    })
+}
+
+#[update]
+#[modifiers("only_owner")]
+pub fn set_ckicp_config(config: CkicpConfig) {
+    CKICP_CONFIG.with(|ckicp_config| {
+        let mut ckicp_config = ckicp_config.borrow_mut();
+        ckicp_config.set(Cbor(Some(config)));
+    })
+}
+
+#[update]
+#[modifiers("only_owner")]
+pub fn update_ckicp_state() {
+    let state: CkicpState = get_ckicp_state();
+
+    // TODO: Update tecdsa signer key and calculate signer ETH address
+
+    CKICP_STATE.with(|ckicp_state| {
+        let mut ckicp_state = ckicp_state.borrow_mut();
+        ckicp_state.set(Cbor(Some(state)));
+    })
 }
