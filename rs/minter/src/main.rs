@@ -42,7 +42,8 @@ use k256::{
 };
 
 use icrc_ledger_types::icrc1::account::{Account, Subaccount};
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
+use icrc_ledger_types::icrc1::transfer::Memo;
+use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
 
 type Amount = u64;
 type MsgId = u128;
@@ -63,9 +64,15 @@ fn main() {}
 
 #[init]
 pub fn init() {
-   
+   rustic::rustic_init();
 }
 
+#[post_upgrade]
+pub fn post_upgrade () {
+    rustic::rustic_post_upgrade(false, false, false);
+
+    // post upgrade code for your canister
+}
 
 
 #[query]
@@ -94,21 +101,34 @@ pub fn get_nonce() -> u32 {
     })
 }
 
-/// MsgId is computed as xor_nibbles(keccak256(caller, nonce))
+/// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce)) 
+/// and does not need to be returned.
+/// ICP is transferred using ICRC-2 approved transfer
 #[update]
-pub fn mint_ckicp(amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSignature, ReturnError> {
+pub fn mint_ckicp(from_subaccount: Subaccount, amount: Amount, target_eth_wallet: [u8;20]) -> Result<EcdsaSignature, ReturnError> {
     let _guard = ReentrancyGuard::new();
     let caller = ic_cdk::caller();
     let caller_subaccount = subaccount_from_principal(&caller);
-    NONCE_MAP.with(|nonce_map| {
+    let nonce = NONCE_MAP.with(|nonce_map| {
         let mut nonce_map = nonce_map.borrow_mut();
         let nonce = nonce_map.get(&caller_subaccount).unwrap_or(0) + 1;
         nonce_map.insert(caller_subaccount, nonce);
+        nonce
     });
+    let msgid = calc_msgid(&caller_subaccount, nonce);
+    let now = ic_cdk::api::time();
     let config: CkicpConfig = get_ckicp_config();
 
     // ICRC-2 transfer
-
+    let tx_args = TransferFromArgs {
+        spender_subaccount: None,
+        from: Account { owner: caller, subaccount: Some(from_subaccount) },
+        to: Account { owner: config.ckicp_canister_id, subaccount: None},
+        amount: Nat::from(amount),
+        fee: None,
+        memo: Some(Memo::from(msgid.to_be_bytes().to_vec())),
+        created_at_time: Some(now),
+    };
     // Generate tECDSA signature
 
     // Add signature to map for future queries

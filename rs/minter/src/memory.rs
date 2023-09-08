@@ -12,24 +12,24 @@ type MsgId = u128;
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct CkicpConfig {
-    ckicp_canister_id: Principal,
-    ckicp_eth_address: [u8; 20],
-    ckicp_fee: Amount,
+    pub ckicp_canister_id: Principal,
+    pub ckicp_eth_address: [u8; 20],
+    pub ckicp_fee: Amount,
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct CkicpState {
-    tecdsa_pubkey: String,
-    tecdsa_signer_address: [u8; 20],
-    total_icp_locked: Amount,
+    pub tecdsa_pubkey: String,
+    pub tecdsa_signer_address: [u8; 20],
+    pub total_icp_locked: Amount,
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct MintStatus {
-    msg_id: MsgId,
-    amount: Amount,
-    expiry: u64, // seconds since UNIX epoch
-    state: MintState,
+    pub msg_id: MsgId,
+    pub amount: Amount,
+    pub expiry: u64, // seconds since UNIX epoch
+    pub state: MintState,
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]

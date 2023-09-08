@@ -15,7 +15,7 @@ pub fn principal_from_subaccount(subaccount: &Subaccount) -> Principal {
     Principal::from_slice(&subaccount[1..1 + std::cmp::min(len, 29)])
 }
 
-pub fn calc_id(caller: &Subaccount, nonce: u32) -> u128 {
+pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     let mut hasher = Sha256::new();
     hasher.update(caller);
     hasher.update(&nonce.to_le_bytes());
