@@ -22,6 +22,7 @@ use rustic::inter_canister::*;
 use rustic::reentrancy_guard::*;
 use rustic::types::*;
 use rustic::utils::*;
+use rustic_macros::modifiers;
 
 use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
@@ -42,7 +43,7 @@ use k256::{
 };
 
 use icrc_ledger_types::icrc1::account::{Account, Subaccount};
-use icrc_ledger_types::icrc1::transfer::Memo;
+use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
 use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
 
 type Amount = u64;
@@ -56,6 +57,8 @@ pub enum ReturnError {
     Expired,
     InterCanisterCallError,
     TecdsaSignatureError,
+    EventSeen,
+    TransferError
 }
 
 fn main() {}
@@ -109,7 +112,7 @@ pub async fn mint_ckicp(
     target_eth_wallet: [u8; 20],
 ) -> Result<EcdsaSignature, ReturnError> {
     let _guard = ReentrancyGuard::new();
-    let caller = ic_cdk::caller();
+    let caller = canister_caller();
     let caller_subaccount = subaccount_from_principal(&caller);
     let nonce = NONCE_MAP.with(|nonce_map| {
         let mut nonce_map = nonce_map.borrow_mut();
@@ -119,7 +122,7 @@ pub async fn mint_ckicp(
     });
     let msg_id = calc_msgid(&caller_subaccount, nonce);
     let config: CkicpConfig = get_ckicp_config();
-    let now = ic_cdk::api::time();
+    let now = canister_time();
     let expiry = now / 1_000_000_000 + config.expiry_seconds;
 
     fn update_status(msg_id: MsgId, amount: Amount, expiry: u64, state: MintState) {
@@ -167,7 +170,7 @@ pub async fn mint_ckicp(
         Ok(_) => {
             update_status(msg_id, amount, expiry, MintState::FundReceived);
         }
-        Err(_) => return Err(ReturnError::InterCanisterCallError),
+        Err(_) => return Err(ReturnError::TransferError),
     }
 
     // Generate tECDSA signature
@@ -192,7 +195,7 @@ pub async fn mint_ckicp(
         res.signature
     };
 
-    update_status(msg_id, amount, expiry, MintState::Signed);
+    
 
     // Add signature to map for future queries
     // SIGNATURE_MAP.with(|sm| {
@@ -207,7 +210,54 @@ pub async fn mint_ckicp(
     //     );
     // });
 
+    update_status(msg_id, amount, expiry, MintState::Signed);
+
     // Return tECDSA signature
     unimplemented!();
 }
 
+/// The event_id needs to uniquely identify each burn event on Ethereum.
+/// This allows the ETH State Sync canister to be stateless.
+#[update]
+#[modifiers("only_owner")]
+pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Result<(), ReturnError> {
+    let config: CkicpConfig = get_ckicp_config();
+
+    let event_seen = EVENT_ID_MAP.with(|event_id_map| {
+        let mut event_id_map = event_id_map.borrow_mut();
+        if event_id_map.contains_key(&event_id) {
+            return true;
+        } else {
+            event_id_map.insert(event_id, 1);
+            return false;
+        }
+    });
+
+    if event_seen {
+        return Err(ReturnError::EventSeen);
+    }
+
+    let tx_args = TransferArg {
+        from_subaccount: None,
+        to: dest,
+        amount: Nat::from(amount),
+        fee: None,
+        memo: None,
+        created_at_time: Some(canister_time()),
+    };
+    let tx_result: Result<Nat, TransferFromError> = canister_call(
+        config.ledger_canister_id,
+        "icrc1_transfer",
+        tx_args,
+        candid::encode_one,
+        |r| candid::decode_one(r),
+    )
+    .await
+    .map_err(|_| ReturnError::InterCanisterCallError)?;
+
+    match tx_result {
+        Ok(_) => {Ok(())}
+        Err(_) => {Err(ReturnError::TransferError)}
+    }
+
+}

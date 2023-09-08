@@ -102,6 +102,7 @@ const CKICP_STATE_PAGE_END: u64 = CKICP_STATE_PAGE_START + CKICP_STATE_SIZE;
 const NONCE_MAP_MEM_ID: MemoryId = MemoryId::new(0);
 const STATUS_MAP_MEM_ID: MemoryId = MemoryId::new(1);
 const SIGNATURE_MAP_MEM_ID: MemoryId = MemoryId::new(2);
+const EVENT_ID_MAP_MEM_ID: MemoryId = MemoryId::new(3);
 
 thread_local! {
 
@@ -135,5 +136,11 @@ thread_local! {
     pub static SIGNATURE_MAP: RefCell<StableBTreeMap<MsgId, EcdsaSignature, VM>> =
         MEMORY_MANAGER.with(|mm| {
             RefCell::new(StableBTreeMap::init(mm.borrow().get(SIGNATURE_MAP_MEM_ID)))
+    });
+
+    // map eventid -> bool
+    pub static EVENT_ID_MAP: RefCell<StableBTreeMap<u128, u8, VM>> =
+        MEMORY_MANAGER.with(|mm| {
+            RefCell::new(StableBTreeMap::new(mm.borrow().get(EVENT_ID_MAP_MEM_ID)))
     });
 }

@@ -41,5 +41,9 @@ sync_events:
 2. Call `burn` or `burnToAccountId` of the ckICP ETH contract.
 3. Wait to get ICP in the ICP wallet.
 
+# Deployment
+## Minter Canister
+After deployed, call `transfer_owner` to change ownership to the State Sync canister.
+
 # License
 MIT
