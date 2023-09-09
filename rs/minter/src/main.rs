@@ -174,7 +174,7 @@ pub async fn mint_ckicp(
     }
 
     // Generate tECDSA signature
-    // payload is (amount, to, msgId, expiry, chainId, ckicp_eth_address)
+    // payload is (amount, to, msgId, expiry, chainId, ckicp_eth_address), 32 bytes each
     let amount_to_transfer = amount - config.ckicp_fee;
     let mut payload_to_sign: [u8; 192] = [0; 192];
     payload_to_sign[0..32].copy_from_slice(&amount_to_transfer.to_be_bytes());
@@ -281,7 +281,7 @@ pub fn set_ckicp_config(config: CkicpConfig) {
 
 #[update]
 #[modifiers("only_owner")]
-pub fn update_ckicp_state() {
+pub async fn update_ckicp_state() {
     let state: CkicpState = get_ckicp_state();
 
     // TODO: Update tecdsa signer key and calculate signer ETH address
