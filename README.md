@@ -2,31 +2,20 @@
 ckICP Main canister on the Internet Computer.
 
 # Architecture
-The ICP part consists of 2 canisters: a *minter* canister, and an *eth_state* canister.
+The ICP part is a *minter* canister.
 
 ## Minter Canister
 This canister is responsible for issuing minting signatures using tECDSA, and transferring 
-ICP when it gets notifications about burned ckICP from the *eth_state* canister.
+ICP when it is notified about ethereum blocks that has the burned ICP event logs.
 
 ```
 mint_ckicp:
     1. ICRC2 transfer
     2. generate tecdsa signature
-release_icp:
-    1. check caller is eth_state canister
+process_block:
+    1. read event logs of the given block hash (via ETH RPC canister)
     2. record event uid
     3. transfer ICP
-```
-
-## ETH State Sync Canister
-This canister is responsible for syncing states from Ethereum, and notifying the minter.
-
-```
-timer:
-    call sync_events every x minutes
-sync_events:
-    look for BurnToIcp and BurnToIcpAccountId events
-    call release_icp of minter canister
 ```
 
 ## ICP -> ckICP User Flow
@@ -38,12 +27,12 @@ sync_events:
 
 ## ckICP -> ICP User Flow
 1. User has ckICP in an ETH wallet, and an ICP wallet (can be empty).
-2. Call `burn` or `burnToAccountId` of the ckICP ETH contract.
+2. Call `burn` or `burnToAccountId` of the ckICP ETH contract, and get the block hash.
+3. Call `process_block` of the ckICP minter canister with the block hash.
 3. Wait to get ICP in the ICP wallet.
 
 # Deployment
 ## Minter Canister
-After deployed, call `transfer_owner` to change ownership to the State Sync canister.
 
 # License
 MIT
