@@ -11,13 +11,11 @@ use ic_canister_log::{declare_log_buffer, export};
 use ic_cdk::api::call::CallResult;
 use ic_cdk::api::management_canister::ecdsa::EcdsaPublicKeyResponse;
 use ic_cdk_macros::{init, post_upgrade, pre_upgrade, query, update};
-use ic_stable_structures::memory_manager::MemoryId;
 use ic_stable_structures::{
     BoundedStorable, DefaultMemoryImpl, StableBTreeMap, StableCell, StableVec, Storable,
 };
 
 use rustic::access_control::*;
-use rustic::default_memory_map::*;
 use rustic::inter_canister::*;
 use rustic::reentrancy_guard::*;
 use rustic::types::*;
@@ -25,6 +23,7 @@ use rustic::utils::*;
 use rustic_macros::modifiers;
 
 use serde_bytes::ByteBuf;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use zeroize::ZeroizeOnDrop;
 
@@ -50,6 +49,17 @@ type Amount = u64;
 type MsgId = u128;
 
 #[derive(CandidType, candid::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum EthRpcError {
+    NoPermission,
+    TooFewCycles(String),
+    ServiceUrlParseError,
+    ServiceUrlHostMissing,
+    ServiceUrlHostNotAllowed(String),
+    ProviderNotFound,
+    HttpRequestError { code: u32, message: String },
+}
+
+#[derive(CandidType, candid::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ReturnError {
     GenericError,
     InputError,
@@ -58,9 +68,18 @@ pub enum ReturnError {
     InterCanisterCallError,
     TecdsaSignatureError,
     EventSeen,
-    TransferError
+    TransferError,
+    EthRpcError(EthRpcError),
+    JsonParseError(String),
 }
 
+#[cfg(not(any(target_arch = "wasm32", test)))]
+fn main() {
+    candid::export_service!();
+    std::print!("{}", __export_service());
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn main() {}
 
 #[init]
@@ -106,6 +125,7 @@ pub fn get_nonce() -> u32 {
 /// and does not need to be returned.
 /// ICP is transferred using ICRC-2 approved transfer
 #[update]
+#[candid_method(update)]
 pub async fn mint_ckicp(
     from_subaccount: Subaccount,
     amount: Amount,
@@ -188,7 +208,7 @@ pub async fn mint_ckicp(
     hasher.update(payload_to_sign);
     let hashed = hasher.finalize();
 
-    let signature: Vec<u8> = {
+    let _signature: Vec<u8> = {
         let (res,): (SignWithECDSAReply,) = ManagementCanister::sign(hashed.to_vec())
             .await
             .map_err(|_| ReturnError::TecdsaSignatureError)?;
@@ -216,9 +236,52 @@ pub async fn mint_ckicp(
     unimplemented!();
 }
 
+/// Look up ethereum event log of the given block for Burn events.
+/// Process those that have not yet been processed.
+#[update]
+#[candid_method(update)]
+pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
+    // get log events from block with the given block_hash
+    // NOTE: if log exceeds pre-allocated space, we need manual intervention.
+    let config: CkicpConfig = get_ckicp_config();
+    let json_rpc_payload = json!({
+        "jsonrpc":"2.0",
+        "method":"eth_getLogs",
+        "params":[{
+            "address": config.ckicp_eth_erc20_address,
+            "blockhash": block_hash,
+        }],
+    });
+
+    let rpc_result: Result<Vec<u8>, EthRpcError> = canister_call(
+        config.eth_rpc_canister_id,
+        "json_rpc_request",
+        (
+            json_rpc_payload.to_string(),
+            config.eth_rpc_service_url.clone(),
+            config.max_response_bytes,
+        ),
+        candid::encode_one,
+        |r| candid::decode_one(r),
+    )
+    .await
+    .map_err(|_| ReturnError::InterCanisterCallError)?;
+
+    let events: Value = match rpc_result {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
+        Err(err) => return Err(ReturnError::EthRpcError(err)),
+    };
+
+    Ok(events.to_string())
+
+    // (TODO) For each Burn event, release ICP, and record any error.
+}
+
 /// The event_id needs to uniquely identify each burn event on Ethereum.
 /// This allows the ETH State Sync canister to be stateless.
 #[update]
+#[candid_method(update)]
 #[modifiers("only_owner")]
 pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Result<(), ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
@@ -256,30 +319,31 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
     .map_err(|_| ReturnError::InterCanisterCallError)?;
 
     match tx_result {
-        Ok(_) => {Ok(())}
-        Err(_) => {Err(ReturnError::TransferError)}
+        Ok(_) => Ok(()),
+        Err(_) => Err(ReturnError::TransferError),
     }
-
 }
 
 #[query]
 pub fn get_signature(msg_id: MsgId) -> Option<EcdsaSignature> {
     SIGNATURE_MAP.with(|sm| {
         let sm = sm.borrow();
-        sm.get(&msg_id).clone()
+        sm.get(&msg_id)
     })
 }
 
 #[update]
+#[candid_method(update)]
 #[modifiers("only_owner")]
 pub fn set_ckicp_config(config: CkicpConfig) {
     CKICP_CONFIG.with(|ckicp_config| {
         let mut ckicp_config = ckicp_config.borrow_mut();
-        ckicp_config.set(Cbor(Some(config)));
+        ckicp_config.set(Cbor(Some(config))).unwrap();
     })
 }
 
 #[update]
+#[candid_method(update)]
 #[modifiers("only_owner")]
 pub async fn update_ckicp_state() {
     let state: CkicpState = get_ckicp_state();
@@ -288,6 +352,6 @@ pub async fn update_ckicp_state() {
 
     CKICP_STATE.with(|ckicp_state| {
         let mut ckicp_state = ckicp_state.borrow_mut();
-        ckicp_state.set(Cbor(Some(state)));
+        ckicp_state.set(Cbor(Some(state))).unwrap();
     })
 }
