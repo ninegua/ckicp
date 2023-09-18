@@ -5,6 +5,41 @@ use icrc_ledger_types::icrc1::account::{Account, Subaccount};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+// This function is copied from ic/rs/ethereum/cketh/minter/src/eth_logs/mod.rs
+fn parse_principal_from_slice(slice: &[u8]) -> Result<Principal, String> {
+    const ANONYMOUS_PRINCIPAL_BYTES: [u8; 1] = [4];
+
+    if slice.is_empty() {
+        return Err("slice too short".to_string());
+    }
+    if slice.len() > 32 {
+        return Err(format!("Expected at most 32 bytes, got {}", slice.len()));
+    }
+    let num_bytes = slice[0] as usize;
+    if num_bytes == 0 {
+        return Err("management canister principal is not allowed".to_string());
+    }
+    if num_bytes > 29 {
+        return Err(format!(
+            "invalid number of bytes: expected a number in the range [1,29], got {num_bytes}",
+        ));
+    }
+    if slice.len() < 1 + num_bytes {
+        return Err("slice too short".to_string());
+    }
+    let (principal_bytes, trailing_zeroes) = slice[1..].split_at(num_bytes);
+    if !trailing_zeroes
+        .iter()
+        .all(|trailing_zero| *trailing_zero == 0)
+    {
+        return Err("trailing non-zero bytes".to_string());
+    }
+    if principal_bytes == ANONYMOUS_PRINCIPAL_BYTES {
+        return Err("anonymous principal is not allowed".to_string());
+    }
+    Principal::try_from_slice(principal_bytes).map_err(|err| err.to_string())
+}
+
 pub fn subaccount_from_principal(principal: &Principal) -> Subaccount {
     let mut subaccount = [0; 32];
     let principal = principal.as_slice();
@@ -13,6 +48,7 @@ pub fn subaccount_from_principal(principal: &Principal) -> Subaccount {
     subaccount
 }
 
+// Note that this is not very safe (i.e. no error handling)
 pub fn principal_from_subaccount(subaccount: &Subaccount) -> Principal {
     let len = subaccount[0] as usize;
     Principal::from_slice(&subaccount[1..1 + std::cmp::min(len, 29)])
@@ -334,14 +370,7 @@ pub fn parse_burn_event(entry: &LogEntry) -> Result<BurnEvent, String> {
                     .into_fixed_bytes()
                     .ok_or_else(|| "principal is not fixed bytes".to_string())
             })
-            .and_then(|x| {
-                if x.len() > 0 {
-                    let len = (x[0] as usize).min(29);
-                    Principal::try_from_slice(&x[1..(1 + len)]).map_err(|err| err.to_string())
-                } else {
-                    Err("Invalid principal id".to_string())
-                }
-            })?;
+            .and_then(|x| parse_principal_from_slice(&x))?;
         let mut subaccount: [u8; 32] = [0; 32];
         burn.get("subaccount")
             .ok_or_else(|| "subaccount is not found".to_string())
