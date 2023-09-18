@@ -297,9 +297,8 @@ async fn process_logs(logs: Value) -> Result<String, ReturnError> {
                 }
             }
             Err(err) => {
-                // Skip this error
+                // Skip this error (which is usually due to different event types)
                 // TODO: shall we log this error?
-                transferred.push(format!("error {:?}", err));
             }
         }
     }
