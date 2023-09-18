@@ -16,9 +16,9 @@ dfx canister $NETWORK call minter set_ckicp_config "(record {
   eth_rpc_canister_id = principal \"$ETHRPC_CANISTER_ID\";
   ckicp_eth_address = $CKICP_ETH_ADDRESS : vec nat8;
   ledger_canister_id = principal \"$ICP_LEDGER_CANISTER_ID\";
-  ckicp_fee = 1000 : nat64;
-  starting_block_number = 9697304: nat64;
-  cycle_cost_of_eth_getlogs = 837614000 : nat;
-  cycle_cost_of_eth_blocknumber = 837614000 : nat;
+  ckicp_fee = 10000 : nat64;
+  starting_block_number = 9715836 : nat64;
+  cycle_cost_of_eth_getlogs = 900000000 : nat;
+  cycle_cost_of_eth_blocknumber = 900000000 : nat;
 })"
 dfx canister $NETWORK call minter update_ckicp_state

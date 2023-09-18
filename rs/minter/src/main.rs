@@ -250,13 +250,6 @@ async fn eth_rpc_call(
     )
     .await
     .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
-    ic_cdk::println!(
-        "result = {}",
-        rpc_result
-            .clone()
-            .map(|bytes| String::from_utf8(bytes).unwrap())
-            .unwrap()
-    );
     Ok(rpc_result)
 }
 
@@ -475,7 +468,7 @@ pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), Retu
                 memo: ic_ledger_types::Memo(0),
                 created_at_time: None,
             };
-            let tx_result: Result<Nat, ic_ledger_types::TransferError> = canister_call(
+            let tx_result: Result<u64, ic_ledger_types::TransferError> = canister_call(
                 config.ledger_canister_id,
                 "transfer",
                 tx_args,

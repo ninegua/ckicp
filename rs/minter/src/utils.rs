@@ -185,7 +185,7 @@ pub fn parse_transfer(entry: &LogEntry) -> Result<ethabi::Log, String> {
         data: entry.data.to_vec(),
     };
 
-    Ok(transfer.parse_log(rawlog).unwrap())
+    transfer.parse_log(rawlog).map_err(|err| format!("{}", err))
 }
 
 pub fn parse_burn_to_icp(entry: &LogEntry) -> Result<ethabi::Log, String> {
@@ -244,7 +244,7 @@ pub fn parse_burn_to_icp_account_id(entry: &LogEntry) -> Result<ethabi::Log, Str
         },
     ];
     let burn_to_icp_account_id = Event {
-        name: "BurnToIcp".to_string(),
+        name: "BurnToIcpAccountId".to_string(),
         inputs: params,
         anonymous: false,
     };
@@ -336,7 +336,7 @@ pub fn parse_burn_event(entry: &LogEntry) -> Result<BurnEvent, String> {
             })
             .and_then(|x| {
                 if x.len() > 0 {
-                    let len = x[0] as usize;
+                    let len = (x[0] as usize).min(29);
                     Principal::try_from_slice(&x[1..(1 + len)]).map_err(|err| err.to_string())
                 } else {
                     Err("Invalid principal id".to_string())
@@ -411,10 +411,26 @@ pub fn always_fail(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
 
 #[test]
 fn test_parse_burn_to_icp() {
-    let s = "{\"id\":null,\"jsonrpc\":\"2.0\",\"result\":[{\"address\":\"0x8c283b98edeb405816fd1d321005df4d3aa956ba\",\"blockHash\":\"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7\",\"blockNumber\":\"0x93fd3b\",\"data\":\"0x000000000000000000000000000000000000000000000000016345785d8a0000\",\"logIndex\":\"0x32\",\"removed\":false,\"topics\":[\"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef\",\"0x0000000000000000000000002c91e73a358e6f0aff4b9200c8bad0d4739a70dd\",\"0x0000000000000000000000000000000000000000000000000000000000000000\"],\"transactionHash\":\"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1\",\"transactionIndex\":\"0x1e\"},{\"address\":\"0x8c283b98edeb405816fd1d321005df4d3aa956ba\",\"blockHash\":\"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7\",\"blockNumber\":\"0x93fd3b\",\"data\":\"0x0000000000000000000000000000000000000000000000000000000000989680\",\"logIndex\":\"0x33\",\"removed\":false,\"topics\":[\"0x7fe818d2b919ac5cc197458482fab0d4285d783795541be06864b0baa6ac2f5c\",\"0x9e7d426db28fa46d013ad4c9955074e3946ab25203eece542b098f1c02000000\",\"0x0000000000000000000000000000000000000000000000000000000000000000\"],\"transactionHash\":\"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1\",\"transactionIndex\":\"0x1e\"}]}";
-    let value: serde_json::Value = serde_json::from_str(s).unwrap();
+    let value = serde_json::json!({"id":null,"jsonrpc":"2.0","result":[{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7","blockNumber":"0x93fd3b","data":"0x000000000000000000000000000000000000000000000000016345785d8a0000","logIndex":"0x32","removed":false,"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000002c91e73a358e6f0aff4b9200c8bad0d4739a70dd","0x0000000000000000000000000000000000000000000000000000000000000000"],"transactionHash":"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1","transactionIndex":"0x1e"},{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7","blockNumber":"0x93fd3b","data":"0x0000000000000000000000000000000000000000000000000000000000989680","logIndex":"0x33","removed":false,"topics":["0x7fe818d2b919ac5cc197458482fab0d4285d783795541be06864b0baa6ac2f5c","0x9e7d426db28fa46d013ad4c9955074e3946ab25203eece542b098f1c02000000","0x0000000000000000000000000000000000000000000000000000000000000000"],"transactionHash":"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1","transactionIndex":"0x1e"},{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0xc502ea9bc3955ff179de881dce2ede89fcc4068adc4e197f138ea4c49c6efb2a","blockNumber":"0x944078","data":"0x0000000000000000000000000000000000000000000000000000000000989680","logIndex":"0x93","removed":false,"topics":["0xa6a16062bb41b9bcfb300790709ad9b778bcb5cdcf87dfa633ab3adfd8a7ab59","0x9bf916c86e344b8a0aaac73271ae0612e8212d0bd59e30db38281982f46d3d2b"],"transactionHash":"0x335791840b4d8b2edfb6018e7e1dc62ba1d81cd0fa46785ccc672e7c491e365d","transactionIndex":"0x57"}]});
+
     let mut data_and_topics = read_event_logs(&value).unwrap();
-    assert_eq!(data_and_topics.len(), 2);
+    assert_eq!(data_and_topics.len(), 3);
+    // Check BurnToIcpAccountId
+    let entry = data_and_topics.pop().unwrap();
+    let m = log_to_map(parse_burn_to_icp_account_id(&entry).unwrap());
+    assert!(m
+        .get("amount")
+        .cloned()
+        .and_then(|x| x.into_uint())
+        .is_some());
+    assert!(m
+        .get("accountId")
+        .cloned()
+        .and_then(|x| x.into_fixed_bytes())
+        .is_some());
+    let burn = parse_burn_event(&entry).unwrap();
+    assert!(matches!(burn, BurnEvent::BurnToIcpAccountId(_, _)));
+    // Check BurnToIcp
     let entry = data_and_topics.pop().unwrap();
     let m = log_to_map(parse_burn_to_icp(&entry).unwrap());
     assert!(m
@@ -434,6 +450,7 @@ fn test_parse_burn_to_icp() {
         .is_some());
     let burn = parse_burn_event(&entry).unwrap();
     assert!(matches!(burn, BurnEvent::BurnToIcp(_, _)));
+    // Check Transfer
     let entry = data_and_topics.pop().unwrap();
     let m = log_to_map(parse_transfer(&entry).unwrap());
     assert!(m
