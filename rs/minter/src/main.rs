@@ -259,6 +259,7 @@ async fn eth_rpc_call(
 /// (TODO): How to avoid DoS attack?
 #[update]
 #[candid_method(update)]
+#[modifiers("only_owner")]
 pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
     // get log events from block with the given block_hash
     // NOTE: if log exceeds pre-allocated space, we need manual intervention.
