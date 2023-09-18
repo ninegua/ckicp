@@ -1,0 +1,54 @@
+type Account = record { owner : principal; subaccount : opt vec nat8 };
+type CkicpConfig = record {
+  expiry_seconds : nat64;
+  max_response_bytes : nat64;
+  target_chain_ids : vec nat8;
+  ckicp_eth_erc20_address : text;
+  eth_rpc_service_url : text;
+  ckicp_canister_id : principal;
+  eth_rpc_canister_id : principal;
+  ckicp_eth_address : vec nat8;
+  ledger_canister_id : principal;
+  ckicp_fee : nat64;
+};
+type CkicpState = record {
+  tecdsa_signer_address : vec nat8;
+  total_icp_locked : nat64;
+  tecdsa_pubkey : text;
+};
+type EcdsaSignature = record { r : vec nat8; s : vec nat8; v : nat8 };
+type EthRpcError = variant {
+  ServiceUrlHostNotAllowed : text;
+  HttpRequestError : record { code : nat32; message : text };
+  TooFewCycles : text;
+  ServiceUrlParseError;
+  ServiceUrlHostMissing;
+  ProviderNotFound;
+  NoPermission;
+};
+type Result = variant { Ok : EcdsaSignature; Err : ReturnError };
+type Result_1 = variant { Ok : text; Err : ReturnError };
+type Result_2 = variant { Ok; Err : ReturnError };
+type ReturnError = variant {
+  GenericError;
+  JsonParseError : text;
+  TransferError;
+  InterCanisterCallError : text;
+  Unauthorized;
+  EventSeen;
+  EthRpcError : EthRpcError;
+  TecdsaSignatureError;
+  InputError;
+  Expired;
+};
+service : () -> {
+  get_ckicp_config : () -> (CkicpConfig) query;
+  get_ckicp_state : () -> (CkicpState) query;
+  get_nonce : () -> (nat32) query;
+  get_signature : (nat) -> (opt EcdsaSignature) query;
+  mint_ckicp : (vec nat8, nat64, vec nat8) -> (Result);
+  process_block : (text) -> (Result_1);
+  release_icp : (Account, nat64, nat) -> (Result_2);
+  set_ckicp_config : (CkicpConfig) -> ();
+  update_ckicp_state : () -> ();
+}
