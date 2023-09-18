@@ -1096,14 +1096,14 @@ dependencies = [
 
 [[package]]
 name = "rustic"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98142690176b15c45b5c90cb776b35c2786acd798b4b44fed627fee2ff96e1a0"
+checksum = "e40e2de4dc9cbc466c2202badbf9830825456eab5a98a32b0bd5de960b303042"
 dependencies = [
  "candid",
  "ciborium",
- "ic-cdk 0.10.0",
- "ic-cdk-macros 0.7.1",
+ "ic-cdk 0.11.0",
+ "ic-cdk-macros 0.8.0",
  "ic-stable-structures",
  "num-traits",
  "rustic-macros",

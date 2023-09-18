@@ -59,9 +59,8 @@ pub enum ReturnError {
     TecdsaSignatureError,
     EventSeen,
     TransferError,
+    MemoryError,
 }
-
-fn main() {}
 
 #[init]
 pub fn init() {
@@ -226,10 +225,10 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
     let event_seen = EVENT_ID_MAP.with(|event_id_map| {
         let mut event_id_map = event_id_map.borrow_mut();
         if event_id_map.contains_key(&event_id) {
-            return true;
+            true
         } else {
             event_id_map.insert(event_id, 1);
-            return false;
+            false
         }
     });
 
@@ -265,28 +264,38 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
 pub fn get_signature(msg_id: MsgId) -> Option<EcdsaSignature> {
     SIGNATURE_MAP.with(|sm| {
         let sm = sm.borrow();
-        sm.get(&msg_id).clone()
+        sm.get(&msg_id)
     })
 }
 
 #[update]
 #[modifiers("only_owner")]
-pub fn set_ckicp_config(config: CkicpConfig) {
-    CKICP_CONFIG.with(|ckicp_config| {
-        let mut ckicp_config = ckicp_config.borrow_mut();
-        ckicp_config.set(Cbor(Some(config)));
-    })
+pub fn set_ckicp_config(config: CkicpConfig) -> Result<(), ReturnError> {
+    CKICP_CONFIG
+        .with(|ckicp_config| {
+            let mut ckicp_config = ckicp_config.borrow_mut();
+            ckicp_config.set(Cbor(Some(config)))
+        })
+        .map_err(|_| ReturnError::MemoryError)?;
+    Ok(())
 }
 
 #[update]
 #[modifiers("only_owner")]
-pub async fn update_ckicp_state() {
+pub async fn update_ckicp_state() -> Result<(), ReturnError> {
     let state: CkicpState = get_ckicp_state();
 
     // TODO: Update tecdsa signer key and calculate signer ETH address
 
-    CKICP_STATE.with(|ckicp_state| {
-        let mut ckicp_state = ckicp_state.borrow_mut();
-        ckicp_state.set(Cbor(Some(state)));
-    })
+    CKICP_STATE
+        .with(|ckicp_state| {
+            let mut ckicp_state = ckicp_state.borrow_mut();
+            ckicp_state.set(Cbor(Some(state)))
+        })
+        .map_err(|_| ReturnError::MemoryError)?;
+    Ok(())
 }
+
+ic_cdk::export_candid!();
+
+fn main() {}
