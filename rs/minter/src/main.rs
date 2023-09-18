@@ -291,14 +291,15 @@ async fn process_logs(logs: Value) -> Result<String, ReturnError> {
             Ok(burn) => {
                 if let Err(err) = release_icp(burn.clone(), entry.event_id).await {
                     // TODO: shall we log this error?
-                    return Err(err);
+                    transferred.push(format!("error {:?}", err));
                 } else {
                     transferred.push(format!("transferred {} {:?}", burn, entry.event_id));
                 }
             }
-            Err(_err) => {
+            Err(err) => {
                 // Skip this error
                 // TODO: shall we log this error?
+                transferred.push(format!("error {:?}", err));
             }
         }
     }
@@ -401,9 +402,6 @@ pub async fn sync_event_logs() -> Result<String, ReturnError> {
 
 /// The event_id needs to uniquely identify each burn event on Ethereum.
 /// This allows the ETH State Sync canister to be stateless.
-#[update]
-#[candid_method(update)]
-#[modifiers("only_owner")]
 pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
 
