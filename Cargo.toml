@@ -26,7 +26,7 @@ p256 = { version = "0.13.2", default_features = false, features = [
 getrandom = "0.2.10"
 lazy_static = "1.4.0" 
 num-traits = "0.2.15"
-rustic = { git = "https://github.com/ninegua/rustic", rev = "2603bd5c9041bf4aca41fe4f5b7d9f614449dfbb" }
+rustic = { git = "https://github.com/ninegua/rustic", rev = "6744ee47b540b7f8d643d8da1f6ecd732843131e" }
 rustic-macros = "0.1.3"
 serde = "1.0.164"
 serde_bytes = "0.11.9"

@@ -65,7 +65,7 @@ pub enum ReturnError {
     InputError,
     Unauthorized,
     Expired,
-    InterCanisterCallError,
+    InterCanisterCallError(String),
     TecdsaSignatureError,
     EventSeen,
     TransferError,
@@ -73,16 +73,8 @@ pub enum ReturnError {
     JsonParseError(String),
 }
 
-#[cfg(not(any(target_arch = "wasm32", test)))]
-fn main() {
-    candid::export_service!();
-    std::print!("{}", __export_service());
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn main() {}
-
 #[init]
+#[candid_method(init)]
 pub fn init() {
     rustic::rustic_init();
 }
@@ -95,6 +87,7 @@ pub fn post_upgrade() {
 }
 
 #[query]
+#[candid_method(query)]
 pub fn get_ckicp_config() -> CkicpConfig {
     CKICP_CONFIG.with(|ckicp_config| {
         let ckicp_config = ckicp_config.borrow();
@@ -103,6 +96,7 @@ pub fn get_ckicp_config() -> CkicpConfig {
 }
 
 #[query]
+#[candid_method(query)]
 pub fn get_ckicp_state() -> CkicpState {
     CKICP_STATE.with(|ckicp_state| {
         let ckicp_state = ckicp_state.borrow();
@@ -111,6 +105,7 @@ pub fn get_ckicp_state() -> CkicpState {
 }
 
 #[query]
+#[candid_method(query)]
 pub fn get_nonce() -> u32 {
     let caller = ic_cdk::caller();
     let caller_subaccount = subaccount_from_principal(&caller);
@@ -184,7 +179,7 @@ pub async fn mint_ckicp(
         |r| candid::decode_one(r),
     )
     .await
-    .map_err(|_| ReturnError::InterCanisterCallError)?;
+    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
 
     match tx_result {
         Ok(_) => {
@@ -238,6 +233,8 @@ pub async fn mint_ckicp(
 
 /// Look up ethereum event log of the given block for Burn events.
 /// Process those that have not yet been processed.
+///
+/// (TODO): deduct a fee to avoid DoS attack
 #[update]
 #[candid_method(update)]
 pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
@@ -249,11 +246,11 @@ pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
         "method":"eth_getLogs",
         "params":[{
             "address": config.ckicp_eth_erc20_address,
-            "blockhash": block_hash,
+            "blockHash": block_hash,
         }],
     });
 
-    let rpc_result: Result<Vec<u8>, EthRpcError> = canister_call(
+    let rpc_result: Result<Vec<u8>, EthRpcError> = canister_call_with_payment(
         config.eth_rpc_canister_id,
         "json_rpc_request",
         (
@@ -261,17 +258,25 @@ pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
             config.eth_rpc_service_url.clone(),
             config.max_response_bytes,
         ),
-        candid::encode_one,
+        candid::encode_args,
         |r| candid::decode_one(r),
+        837614000,
     )
     .await
-    .map_err(|_| ReturnError::InterCanisterCallError)?;
+    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
 
     let events: Value = match rpc_result {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
         Err(err) => return Err(ReturnError::EthRpcError(err)),
     };
+    /*
+    let data_and_topics =
+        read_event_logs(&events).map_err(|err| ReturnError::JsonParseError(err.to_string()))?;
+    for (data, topics) in data_and_topics.into_iter() {
+        let log = parse_burn_to_icp(data, topics).map_err(|err| ReturnError::JsonParseError(err))?;
+    }
+    */
 
     Ok(events.to_string())
 
@@ -316,7 +321,7 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
         |r| candid::decode_one(r),
     )
     .await
-    .map_err(|_| ReturnError::InterCanisterCallError)?;
+    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
 
     match tx_result {
         Ok(_) => Ok(()),
@@ -325,6 +330,7 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
 }
 
 #[query]
+#[candid_method(query)]
 pub fn get_signature(msg_id: MsgId) -> Option<EcdsaSignature> {
     SIGNATURE_MAP.with(|sm| {
         let sm = sm.borrow();
@@ -355,3 +361,12 @@ pub async fn update_ckicp_state() {
         ckicp_state.set(Cbor(Some(state))).unwrap();
     })
 }
+
+#[cfg(not(any(target_arch = "wasm32", test)))]
+fn main() {
+    candid::export_service!();
+    std::print!("{}", __export_service());
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn main() {}
