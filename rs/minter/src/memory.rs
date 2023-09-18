@@ -24,6 +24,9 @@ pub struct CkicpConfig {
     pub expiry_seconds: u64,
     pub target_chain_ids: Vec<u8>,
     pub max_response_bytes: u64,
+    pub starting_block_number: u64,
+    pub cycle_cost_of_eth_getlogs: u128,
+    pub cycle_cost_of_eth_blocknumber: u128,
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
@@ -31,6 +34,20 @@ pub struct CkicpState {
     pub tecdsa_pubkey: String,
     pub tecdsa_signer_address: [u8; 20],
     pub total_icp_locked: Amount,
+    pub last_block: u64,
+    pub next_blocks: std::collections::VecDeque<u64>,
+}
+
+impl Default for CkicpState {
+    fn default() -> Self {
+        Self {
+            tecdsa_pubkey: "".to_string(),
+            tecdsa_signer_address: [0; 20],
+            total_icp_locked: 0,
+            last_block: 0,
+            next_blocks: std::collections::VecDeque::new(),
+        }
+    }
 }
 
 #[derive(

@@ -41,9 +41,8 @@ use k256::{
     PublicKey, Secp256k1,
 };
 
-use icrc_ledger_types::icrc1::account::{Account, Subaccount};
-use icrc_ledger_types::icrc1::transfer::{Memo, TransferArg, TransferError};
-use icrc_ledger_types::icrc2::transfer_from::{TransferFromArgs, TransferFromError};
+use icrc_ledger_types::icrc1;
+use icrc_ledger_types::icrc2;
 
 type Amount = u64;
 type MsgId = u128;
@@ -68,9 +67,10 @@ pub enum ReturnError {
     InterCanisterCallError(String),
     TecdsaSignatureError,
     EventSeen,
-    TransferError,
+    TransferError(String),
     EthRpcError(EthRpcError),
     JsonParseError(String),
+    EventLogError(LogError),
 }
 
 #[init]
@@ -100,7 +100,7 @@ pub fn get_ckicp_config() -> CkicpConfig {
 pub fn get_ckicp_state() -> CkicpState {
     CKICP_STATE.with(|ckicp_state| {
         let ckicp_state = ckicp_state.borrow();
-        ckicp_state.get().0.clone().unwrap()
+        ckicp_state.get().0.clone().unwrap_or_default()
     })
 }
 
@@ -122,7 +122,7 @@ pub fn get_nonce() -> u32 {
 #[update]
 #[candid_method(update)]
 pub async fn mint_ckicp(
-    from_subaccount: Subaccount,
+    from_subaccount: icrc1::account::Subaccount,
     amount: Amount,
     target_eth_wallet: [u8; 20],
 ) -> Result<EcdsaSignature, ReturnError> {
@@ -156,22 +156,22 @@ pub async fn mint_ckicp(
 
     update_status(msg_id, amount, expiry, MintState::Init);
     // ICRC-2 transfer
-    let tx_args = TransferFromArgs {
+    let tx_args = icrc2::transfer_from::TransferFromArgs {
         spender_subaccount: None,
-        from: Account {
+        from: icrc1::account::Account {
             owner: caller,
             subaccount: Some(from_subaccount),
         },
-        to: Account {
+        to: icrc1::account::Account {
             owner: config.ckicp_canister_id,
             subaccount: None,
         },
         amount: Nat::from(amount),
         fee: None,
-        memo: Some(Memo::from(msg_id.to_be_bytes().to_vec())),
+        memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
         created_at_time: Some(now),
     };
-    let tx_result: Result<Nat, TransferFromError> = canister_call(
+    let tx_result: Result<Nat, icrc2::transfer_from::TransferFromError> = canister_call(
         config.ledger_canister_id,
         "icrc2_transfer_from",
         tx_args,
@@ -185,7 +185,7 @@ pub async fn mint_ckicp(
         Ok(_) => {
             update_status(msg_id, amount, expiry, MintState::FundReceived);
         }
-        Err(_) => return Err(ReturnError::TransferError),
+        Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
     }
 
     // Generate tECDSA signature
@@ -231,10 +231,39 @@ pub async fn mint_ckicp(
     unimplemented!();
 }
 
+async fn eth_rpc_call(
+    json_rpc_payload: Value,
+    cycles: u128,
+) -> Result<Result<Vec<u8>, EthRpcError>, ReturnError> {
+    let config: CkicpConfig = get_ckicp_config();
+    let rpc_result: Result<Vec<u8>, EthRpcError> = canister_call_with_payment(
+        config.eth_rpc_canister_id,
+        "json_rpc_request",
+        (
+            json_rpc_payload.to_string(),
+            config.eth_rpc_service_url.clone(),
+            config.max_response_bytes,
+        ),
+        candid::encode_args,
+        |r| candid::decode_one(r),
+        cycles,
+    )
+    .await
+    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
+    ic_cdk::println!(
+        "result = {}",
+        rpc_result
+            .clone()
+            .map(|bytes| String::from_utf8(bytes).unwrap())
+            .unwrap()
+    );
+    Ok(rpc_result)
+}
+
 /// Look up ethereum event log of the given block for Burn events.
 /// Process those that have not yet been processed.
 ///
-/// (TODO): deduct a fee to avoid DoS attack
+/// (TODO): How to avoid DoS attack?
 #[update]
 #[candid_method(update)]
 pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
@@ -250,37 +279,130 @@ pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
         }],
     });
 
-    let rpc_result: Result<Vec<u8>, EthRpcError> = canister_call_with_payment(
-        config.eth_rpc_canister_id,
-        "json_rpc_request",
-        (
-            json_rpc_payload.to_string(),
-            config.eth_rpc_service_url.clone(),
-            config.max_response_bytes,
-        ),
-        candid::encode_args,
-        |r| candid::decode_one(r),
-        837614000,
-    )
-    .await
-    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
-
-    let events: Value = match rpc_result {
+    let logs: Value = match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_getlogs).await?
+    {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
         Err(err) => return Err(ReturnError::EthRpcError(err)),
     };
-    /*
-    let data_and_topics =
-        read_event_logs(&events).map_err(|err| ReturnError::JsonParseError(err.to_string()))?;
-    for (data, topics) in data_and_topics.into_iter() {
-        let log = parse_burn_to_icp(data, topics).map_err(|err| ReturnError::JsonParseError(err))?;
+    process_logs(logs).await
+}
+
+/// Given some event logs, process burn events in them.
+async fn process_logs(logs: Value) -> Result<String, ReturnError> {
+    let entries = read_event_logs(&logs).map_err(ReturnError::EventLogError)?;
+    let mut transferred = Vec::new();
+    for entry in entries {
+        match parse_burn_event(&entry) {
+            Ok(burn) => {
+                if let Err(err) = release_icp(burn.clone(), entry.event_id).await {
+                    // TODO: shall we log this error?
+                    return Err(err);
+                } else {
+                    transferred.push(format!("transferred {} {:?}", burn, entry.event_id));
+                }
+            }
+            Err(_err) => {
+                // Skip this error
+                // TODO: shall we log this error?
+            }
+        }
     }
-    */
 
-    Ok(events.to_string())
+    Ok(transferred.join("\n"))
+}
 
-    // (TODO) For each Burn event, release ICP, and record any error.
+/// Sync event logs of the ckICP ERC-20 contract via RPC.
+/// This is meant to be called from a timer.
+#[update]
+#[candid_method(update)]
+#[modifiers("only_owner")]
+pub async fn sync_event_logs() -> Result<String, ReturnError> {
+    let _guard = ReentrancyGuard::new();
+    // get log events from block with the given block_hash
+    // NOTE: if log exceeds pre-allocated space, we need manual intervention.
+    let config: CkicpConfig = get_ckicp_config();
+    let mut state: CkicpState = get_ckicp_state();
+    match state.next_blocks.pop_front() {
+        Some(next_block) => {
+            // get logs between last_block and next_block.
+            let json_rpc_payload = json!({
+                "jsonrpc":"2.0",
+                "method":"eth_getLogs",
+                "params":[{
+                    "address": config.ckicp_eth_erc20_address,
+                    "fromBlock": format!("{:#x}", state.last_block + 1),
+                    "toBlock": format!("{:#x}", next_block),
+                }],
+            });
+            let logs: Value =
+                match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_getlogs).await? {
+                    Ok(bytes) => serde_json::from_slice(&bytes)
+                        .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
+                    Err(err) => return Err(ReturnError::EthRpcError(err)),
+                };
+            // TODO: process_logs may throw errors that requires futher processing: range is too big,
+            // or number of returned bytes exceed limit. This can handled by halving the range and re-try.
+            let result = process_logs(logs).await?;
+            CKICP_STATE.with(|ckicp_state| {
+                let mut ckicp_state = ckicp_state.borrow_mut();
+                let mut state = ckicp_state.get().0.clone();
+                state.as_mut().map(|s| {
+                    if let Some(last_block) = s.next_blocks.pop_front() {
+                        s.last_block = last_block;
+                    }
+                });
+                ckicp_state.set(Cbor(state)).unwrap();
+            });
+            Ok(result)
+        }
+        None => {
+            // get latest block number, and push to state.next_block_starts array.
+            let json_rpc_payload = json!({
+                "jsonrpc":"2.0",
+                "method":"eth_blockNumber",
+                "params":[]
+            });
+            let result: Value =
+                match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_blocknumber).await? {
+                    Ok(bytes) => serde_json::from_slice(&bytes)
+                        .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
+                    Err(err) => {
+                        // TODO: log error and skip (because this will be called again)
+                        return Err(ReturnError::JsonParseError(format!("{:?}", err)));
+                    }
+                };
+            let block_number = match result
+                .as_object()
+                .and_then(|x| x.get("result"))
+                .and_then(|x| x.as_str())
+                .and_then(|x| hex::decode(&x[2..]).ok())
+                .map(|x| {
+                    let mut bytes = [0; 8];
+                    let len = x.len().min(8);
+                    bytes[(8 - len)..].copy_from_slice(&x[(x.len() - len)..]);
+                    u64::from_be_bytes(bytes)
+                }) {
+                Some(block_number) => block_number,
+                None => {
+                    return Err(ReturnError::JsonParseError(
+                        "cannot parse result as a block number".to_string(),
+                    ));
+                }
+            };
+            CKICP_STATE.with(|ckicp_state| {
+                let mut ckicp_state = ckicp_state.borrow_mut();
+                let mut state = ckicp_state.get().0.clone();
+                state.as_mut().map(|s| match s.next_blocks.pop_back() {
+                    None => s.next_blocks.push_back(block_number),
+                    Some(x) if x < block_number => s.next_blocks.push_back(x),
+                    _ => (),
+                });
+                ckicp_state.set(Cbor(state)).unwrap();
+            });
+            Ok(String::new())
+        }
+    }
 }
 
 /// The event_id needs to uniquely identify each burn event on Ethereum.
@@ -288,15 +410,16 @@ pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
 #[update]
 #[candid_method(update)]
 #[modifiers("only_owner")]
-pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Result<(), ReturnError> {
+pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
 
+    // FIXME: should differentiate between event_seen and event_processed
     let event_seen = EVENT_ID_MAP.with(|event_id_map| {
         let mut event_id_map = event_id_map.borrow_mut();
-        if event_id_map.contains_key(&event_id) {
+        if event_id_map.contains_key(&event_id.into()) {
             return true;
         } else {
-            event_id_map.insert(event_id, 1);
+            event_id_map.insert(event_id.into(), 1);
             return false;
         }
     });
@@ -305,27 +428,67 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
         return Err(ReturnError::EventSeen);
     }
 
-    let tx_args = TransferArg {
-        from_subaccount: None,
-        to: dest,
-        amount: Nat::from(amount),
-        fee: None,
-        memo: None,
-        created_at_time: Some(canister_time()),
-    };
-    let tx_result: Result<Nat, TransferFromError> = canister_call(
-        config.ledger_canister_id,
-        "icrc1_transfer",
-        tx_args,
-        candid::encode_one,
-        |r| candid::decode_one(r),
-    )
-    .await
-    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
-
-    match tx_result {
-        Ok(_) => Ok(()),
-        Err(_) => Err(ReturnError::TransferError),
+    match event {
+        BurnEvent::BurnToIcp(account, amount) => {
+            if amount <= config.ckicp_fee {
+                return Err(ReturnError::TransferError(format!(
+                    "Amount must be greater than fee {}",
+                    config.ckicp_fee
+                )));
+            }
+            let amount = Nat::from(amount - config.ckicp_fee);
+            let tx_args = icrc1::transfer::TransferArg {
+                from_subaccount: None,
+                to: account,
+                amount,
+                fee: None,
+                memo: None,
+                created_at_time: None,
+            };
+            let tx_result: Result<Nat, icrc1::transfer::TransferError> = canister_call(
+                config.ledger_canister_id,
+                "icrc1_transfer",
+                tx_args,
+                candid::encode_one,
+                |r| candid::decode_one(r),
+            )
+            .await
+            .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
+            match tx_result {
+                Ok(_) => Ok(()),
+                Err(err) => Err(ReturnError::TransferError(format!("{:?}", err))),
+            }
+        }
+        BurnEvent::BurnToIcpAccountId(account_id, amount) => {
+            if amount <= config.ckicp_fee {
+                return Err(ReturnError::TransferError(format!(
+                    "Amount must be greater than fee {}",
+                    config.ckicp_fee
+                )));
+            }
+            let amount = ic_ledger_types::Tokens::from_e8s(amount - config.ckicp_fee);
+            let tx_args = ic_ledger_types::TransferArgs {
+                from_subaccount: None,
+                to: account_id,
+                amount,
+                fee: ic_ledger_types::Tokens::from_e8s(config.ckicp_fee),
+                memo: ic_ledger_types::Memo(0),
+                created_at_time: None,
+            };
+            let tx_result: Result<Nat, ic_ledger_types::TransferError> = canister_call(
+                config.ledger_canister_id,
+                "transfer",
+                tx_args,
+                candid::encode_one,
+                |r| candid::decode_one(r),
+            )
+            .await
+            .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
+            match tx_result {
+                Ok(_) => Ok(()),
+                Err(err) => Err(ReturnError::TransferError(format!("{:?}", err))),
+            }
+        }
     }
 }
 
@@ -352,9 +515,10 @@ pub fn set_ckicp_config(config: CkicpConfig) {
 #[candid_method(update)]
 #[modifiers("only_owner")]
 pub async fn update_ckicp_state() {
-    let state: CkicpState = get_ckicp_state();
-
+    let config: CkicpConfig = get_ckicp_config();
+    let mut state: CkicpState = get_ckicp_state();
     // TODO: Update tecdsa signer key and calculate signer ETH address
+    state.last_block = config.starting_block_number;
 
     CKICP_STATE.with(|ckicp_state| {
         let mut ckicp_state = ckicp_state.borrow_mut();

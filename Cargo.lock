@@ -520,6 +520,7 @@ dependencies = [
  "ic-canister-log",
  "ic-cdk",
  "ic-cdk-macros",
+ "ic-ledger-types",
  "ic-stable-structures",
  "icrc-ledger-types",
  "k256",
@@ -1293,6 +1294,21 @@ dependencies = [
  "serde",
  "serde_tokenstream",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "ic-ledger-types"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cd65aaa43039c7a6f82f2c126251b53dd04957b8cc95b61691c046bfde5771e"
+dependencies = [
+ "candid",
+ "crc32fast",
+ "hex",
+ "ic-cdk",
+ "serde",
+ "serde_bytes",
+ "sha2",
 ]
 
 [[package]]

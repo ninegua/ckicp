@@ -1,4 +1,6 @@
+use candid::CandidType;
 use candid::Principal;
+use ic_ledger_types::AccountIdentifier;
 use icrc_ledger_types::icrc1::account::{Account, Subaccount};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -29,16 +31,80 @@ pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     id
 }
 
-pub fn read_event_logs(
-    events: &serde_json::Value,
-) -> Result<Vec<(Vec<u8>, Vec<Vec<u8>>)>, &'static str> {
-    if let Some(results) = events
+pub struct LogEntry {
+    pub event_id: EventId,
+    data: Vec<u8>,
+    topics: Vec<Vec<u8>>,
+}
+
+#[derive(CandidType, candid::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct LogError {
+    pub code: Option<u64>,
+    pub message: String,
+}
+
+impl From<&'_ str> for LogError {
+    fn from(msg: &'_ str) -> Self {
+        LogError {
+            code: None,
+            message: msg.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for LogError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "LogError {{ code: {:?}, message: {} }}",
+            self.code, self.message
+        )
+    }
+}
+
+pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogError> {
+    if let Some(error) = events
+        .as_object()
+        .and_then(|x| x.get("error"))
+        .and_then(|x| x.as_object())
+    {
+        Err(LogError {
+            code: error.get("code").and_then(|x| x.as_u64()),
+            message: error
+                .get("message")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
+    } else if let Some(results) = events
         .as_object()
         .and_then(|x| x.get("result"))
         .and_then(|x| x.as_array())
     {
-        let mut data_and_topics = Vec::new();
+        let mut entries = Vec::new();
         for r in results {
+            let block_number = r
+                .as_object()
+                .and_then(|x| x.get("blockNumber"))
+                .and_then(|x| x.as_str())
+                .and_then(|x| hex::decode(&x[2..]).ok())
+                .map(|x| {
+                    let mut bytes = [0; 8];
+                    let len = x.len().min(8);
+                    bytes[(8 - len)..].copy_from_slice(&x[(x.len() - len)..]);
+                    u64::from_be_bytes(bytes)
+                });
+            let log_index = r
+                .as_object()
+                .and_then(|x| x.get("logIndex"))
+                .and_then(|x| x.as_str())
+                .and_then(|x| hex::decode(&x[2..]).ok())
+                .map(|x| {
+                    let mut bytes = [0; 8];
+                    let len = x.len().min(8);
+                    bytes[(8 - len)..].copy_from_slice(&x[(x.len() - len)..]);
+                    u64::from_be_bytes(bytes)
+                });
             let data = r
                 .as_object()
                 .and_then(|x| x.get("data"))
@@ -54,21 +120,36 @@ pub fn read_event_logs(
                         .filter_map(|x| hex::decode(&x[2..]).ok())
                         .collect()
                 });
-            match (data, topics) {
-                (Some(data), Some(topics)) => data_and_topics.push((data, topics)),
-                (None, _) => return Err("No valid 'result.data' found in JSON"),
-                (_, None) => {
-                    return Err("No 'result.topics' found in JSON");
+            match (block_number, log_index, data, topics) {
+                (Some(block_number), Some(log_index), Some(data), Some(topics)) => {
+                    entries.push(LogEntry {
+                        event_id: EventId {
+                            block_number,
+                            log_index,
+                        },
+                        data,
+                        topics,
+                    })
+                }
+                (None, _, _, _) => {
+                    return Err("No valid 'result.block_number' found in JSON".into())
+                }
+                (_, None, _, _) => {
+                    return Err("No 'result.log_index' found in JSON".into());
+                }
+                (_, _, None, _) => return Err("No valid 'result.data' found in JSON".into()),
+                (_, _, _, None) => {
+                    return Err("No 'result.topics' found in JSON".into());
                 }
             }
         }
-        Ok(data_and_topics)
+        Ok(entries)
     } else {
-        Err("No 'result' found in JSON")
+        Err("No 'result' found in JSON".into())
     }
 }
 
-pub fn parse_transfer(data: Vec<u8>, topics: Vec<Vec<u8>>) -> Result<ethabi::Log, String> {
+pub fn parse_transfer(entry: &LogEntry) -> Result<ethabi::Log, String> {
     use ethabi::*;
 
     let params = vec![
@@ -94,16 +175,20 @@ pub fn parse_transfer(data: Vec<u8>, topics: Vec<Vec<u8>>) -> Result<ethabi::Log
         anonymous: false,
     };
 
-    let topics = topics
+    let topics = entry
+        .topics
         .iter()
         .map(|topic| Hash::from_slice(&topic))
         .collect();
-    let rawlog = RawLog { topics, data };
+    let rawlog = RawLog {
+        topics,
+        data: entry.data.to_vec(),
+    };
 
     Ok(transfer.parse_log(rawlog).unwrap())
 }
 
-pub fn parse_burn_to_icp(data: Vec<u8>, topics: Vec<Vec<u8>>) -> Result<ethabi::Log, String> {
+pub fn parse_burn_to_icp(entry: &LogEntry) -> Result<ethabi::Log, String> {
     use ethabi::*;
 
     let params = vec![
@@ -129,20 +214,21 @@ pub fn parse_burn_to_icp(data: Vec<u8>, topics: Vec<Vec<u8>>) -> Result<ethabi::
         anonymous: false,
     };
 
-    let topics = topics
+    let topics = entry
+        .topics
         .iter()
         .map(|topic| Hash::from_slice(&topic))
         .collect();
-    let rawlog = RawLog { topics, data };
+    let rawlog = RawLog {
+        topics,
+        data: entry.data.to_vec(),
+    };
     burn_to_icp
         .parse_log(rawlog)
         .map_err(|err| format!("{}", err))
 }
 
-pub fn parse_burn_to_icp_account_id(
-    data: Vec<u8>,
-    topics: Vec<Vec<u8>>,
-) -> Result<ethabi::Log, String> {
+pub fn parse_burn_to_icp_account_id(entry: &LogEntry) -> Result<ethabi::Log, String> {
     use ethabi::*;
 
     let params = vec![
@@ -163,11 +249,15 @@ pub fn parse_burn_to_icp_account_id(
         anonymous: false,
     };
 
-    let topics = topics
+    let topics = entry
+        .topics
         .iter()
         .map(|topic| Hash::from_slice(&topic))
         .collect();
-    let rawlog = RawLog { topics, data };
+    let rawlog = RawLog {
+        topics,
+        data: entry.data.to_vec(),
+    };
     burn_to_icp_account_id
         .parse_log(rawlog)
         .map_err(|err| format!("{}", err))
@@ -175,6 +265,136 @@ pub fn parse_burn_to_icp_account_id(
 
 pub fn log_to_map(log: ethabi::Log) -> BTreeMap<String, ethabi::Token> {
     log.params.into_iter().map(|p| (p.name, p.value)).collect()
+}
+
+type Amount = u64;
+
+#[derive(Clone, CandidType, serde::Serialize, serde::Deserialize, Debug)]
+pub enum BurnEvent {
+    BurnToIcp(Account, Amount),
+    BurnToIcpAccountId(AccountIdentifier, Amount),
+}
+
+impl std::fmt::Display for BurnEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use BurnEvent::*;
+        match self {
+            BurnToIcp(account, amount) => {
+                write!(
+                    f,
+                    "BurnToIcp(Account {{ principal: {}, subaccount: {}}}, {})",
+                    account.owner,
+                    account
+                        .subaccount
+                        .map(|x| hex::encode(x))
+                        .unwrap_or_else(|| "None".to_string()),
+                    amount
+                )
+            }
+            BurnToIcpAccountId(account_id, amount) => {
+                write!(
+                    f,
+                    "BurnToIcpAccountId({}, {})",
+                    hex::encode(account_id),
+                    amount
+                )
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, CandidType, serde::Serialize, serde::Deserialize, Debug)]
+pub struct EventId {
+    block_number: u64,
+    log_index: u64,
+}
+
+impl From<EventId> for u128 {
+    fn from(x: EventId) -> Self {
+        (u128::from(x.block_number) << 64) + u128::from(x.log_index)
+    }
+}
+
+pub fn parse_burn_event(entry: &LogEntry) -> Result<BurnEvent, String> {
+    if let Ok(burn) = parse_burn_to_icp(entry).map(log_to_map) {
+        let amount = burn
+            .get("amount")
+            .ok_or_else(|| "amount is not found".to_string())
+            .and_then(|x| {
+                x.clone()
+                    .into_uint()
+                    .ok_or_else(|| "amount is not uint256".to_string())
+            })
+            .and_then(|x| u64::try_from(x).map_err(|err| err.to_string()))?;
+        let principal = burn
+            .get("principal")
+            .ok_or_else(|| "principal is not found".to_string())
+            .and_then(|x| {
+                x.clone()
+                    .into_fixed_bytes()
+                    .ok_or_else(|| "principal is not fixed bytes".to_string())
+            })
+            .and_then(|x| {
+                if x.len() > 0 {
+                    let len = x[0] as usize;
+                    Principal::try_from_slice(&x[1..(1 + len)]).map_err(|err| err.to_string())
+                } else {
+                    Err("Invalid principal id".to_string())
+                }
+            })?;
+        let mut subaccount: [u8; 32] = [0; 32];
+        burn.get("subaccount")
+            .ok_or_else(|| "subaccount is not found".to_string())
+            .and_then(|x| {
+                x.clone()
+                    .into_fixed_bytes()
+                    .ok_or_else(|| "subaccount is not fixed bytes".to_string())
+            })
+            .and_then(|x| {
+                if x.len() == 32 {
+                    subaccount.copy_from_slice(&x);
+                    Ok(())
+                } else {
+                    Err("subaccount is not 32 bytes".to_string())
+                }
+            })?;
+        let subaccount = if subaccount == [0; 32] {
+            None
+        } else {
+            Some(subaccount)
+        };
+        Ok(BurnEvent::BurnToIcp(
+            Account {
+                owner: principal,
+                subaccount,
+            },
+            amount,
+        ))
+    } else if let Ok(burn) = parse_burn_to_icp_account_id(entry).map(log_to_map) {
+        let amount = burn
+            .get("amount")
+            .ok_or_else(|| "amount is not found".to_string())
+            .and_then(|x| {
+                x.clone()
+                    .into_uint()
+                    .ok_or_else(|| "amount is not uint256".to_string())
+            })
+            .and_then(|x| u64::try_from(x).map_err(|err| err.to_string()))?;
+        let account_id = burn
+            .get("accountId")
+            .ok_or_else(|| "accountId is not found".to_string())
+            .and_then(|x| {
+                x.clone()
+                    .into_fixed_bytes()
+                    .ok_or_else(|| "accountId is not fixed bytes".to_string())
+            })
+            .and_then(|x| {
+                AccountIdentifier::from_slice(x.as_slice()).map_err(|err| err.to_string())
+            })?;
+        Ok(BurnEvent::BurnToIcpAccountId(account_id, amount))
+    } else {
+        Err("Expect either BurnToIcp or BurnToIcpAccountId event".to_string())
+    }
 }
 
 // In the following, we register a custom getrandom implementation because
@@ -195,8 +415,8 @@ fn test_parse_burn_to_icp() {
     let value: serde_json::Value = serde_json::from_str(s).unwrap();
     let mut data_and_topics = read_event_logs(&value).unwrap();
     assert_eq!(data_and_topics.len(), 2);
-    let (data, topics) = data_and_topics.pop().unwrap();
-    let m = log_to_map(parse_burn_to_icp(data, topics).unwrap());
+    let entry = data_and_topics.pop().unwrap();
+    let m = log_to_map(parse_burn_to_icp(&entry).unwrap());
     assert!(m
         .get("amount")
         .cloned()
@@ -212,8 +432,10 @@ fn test_parse_burn_to_icp() {
         .cloned()
         .and_then(|x| x.into_fixed_bytes())
         .is_some());
-    let (data, topics) = data_and_topics.pop().unwrap();
-    let m = log_to_map(parse_transfer(data, topics).unwrap());
+    let burn = parse_burn_event(&entry).unwrap();
+    assert!(matches!(burn, BurnEvent::BurnToIcp(_, _)));
+    let entry = data_and_topics.pop().unwrap();
+    let m = log_to_map(parse_transfer(&entry).unwrap());
     assert!(m
         .get("from")
         .cloned()
