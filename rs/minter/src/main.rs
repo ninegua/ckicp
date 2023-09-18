@@ -17,8 +17,8 @@ use ic_stable_structures::{
 };
 
 use rustic::access_control::*;
-use rustic::default_memory_map::*;
 use rustic::inter_canister::*;
+use rustic::memory_map::*;
 use rustic::reentrancy_guard::*;
 use rustic::types::*;
 use rustic::utils::*;
@@ -58,7 +58,7 @@ pub enum ReturnError {
     InterCanisterCallError,
     TecdsaSignatureError,
     EventSeen,
-    TransferError
+    TransferError,
 }
 
 fn main() {}
@@ -256,10 +256,9 @@ pub async fn release_icp(dest: Account, amount: Amount, event_id: u128) -> Resul
     .map_err(|_| ReturnError::InterCanisterCallError)?;
 
     match tx_result {
-        Ok(_) => {Ok(())}
-        Err(_) => {Err(ReturnError::TransferError)}
+        Ok(_) => Ok(()),
+        Err(_) => Err(ReturnError::TransferError),
     }
-
 }
 
 #[query]

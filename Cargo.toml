@@ -3,6 +3,7 @@ members = [
     # "rs/eth_state",
     "rs/minter"
 ]
+resolver = "2"
 
 [workspace.dependencies]
 async-trait = "0.1.73"
