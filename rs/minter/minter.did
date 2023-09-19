@@ -1,11 +1,7 @@
-type Account = record { owner : principal; subaccount : opt vec nat8 };
-type BurnEvent = variant {
-  BurnToIcp : record { Account; nat64 };
-  BurnToIcpAccountId : record { vec nat8; nat64 };
-};
 type CkicpConfig = record {
   expiry_seconds : nat64;
   max_response_bytes : nat64;
+  ckicp_getlogs_topics : vec text;
   target_chain_ids : vec nat8;
   ckicp_eth_erc20_address : text;
   eth_rpc_service_url : text;
@@ -35,11 +31,9 @@ type EthRpcError = variant {
   ProviderNotFound;
   NoPermission;
 };
-type EventId = record { log_index : nat64; block_number : nat64 };
 type LogError = record { code : opt nat64; message : text };
 type Result = variant { Ok : EcdsaSignature; Err : ReturnError };
 type Result_1 = variant { Ok : text; Err : ReturnError };
-type Result_2 = variant { Ok; Err : ReturnError };
 type ReturnError = variant {
   GenericError;
   JsonParseError : text;
@@ -60,7 +54,6 @@ service : () -> {
   get_signature : (nat) -> (opt EcdsaSignature) query;
   mint_ckicp : (vec nat8, nat64, vec nat8) -> (Result);
   process_block : (text) -> (Result_1);
-  release_icp : (BurnEvent, EventId) -> (Result_2);
   set_ckicp_config : (CkicpConfig) -> ();
   sync_event_logs : () -> (Result_1);
   update_ckicp_state : () -> ();

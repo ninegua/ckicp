@@ -317,24 +317,78 @@ pub async fn sync_event_logs() -> Result<String, ReturnError> {
     // NOTE: if log exceeds pre-allocated space, we need manual intervention.
     let config: CkicpConfig = get_ckicp_config();
     let mut state: CkicpState = get_ckicp_state();
-    match state.next_blocks.pop_front() {
-        Some(next_block) => {
-            // get logs between last_block and next_block.
-            let json_rpc_payload = json!({
-                "jsonrpc":"2.0",
-                "method":"eth_getLogs",
-                "params":[{
-                    "address": config.ckicp_eth_erc20_address,
-                    "fromBlock": format!("{:#x}", state.last_block + 1),
-                    "toBlock": format!("{:#x}", next_block),
-                }],
+    let next_block = state
+        .next_blocks
+        .pop_front()
+        .map(|x| format!("{:#x}", x))
+        .unwrap_or("safe".to_string());
+
+    // get logs between last_block and next_block.
+    let json_rpc_payload = json!({
+        "jsonrpc":"2.0",
+        "method":"eth_getLogs",
+        "params":[{
+            "address": config.ckicp_eth_erc20_address,
+            "fromBlock": format!("{:#x}", state.last_block + 1),
+            "toBlock": next_block,
+            "topics": [ config.ckicp_getlogs_topics ],
+        }],
+    });
+    match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_getlogs).await? {
+        Err(EthRpcError::HttpRequestError { code, message }) => {
+            let last_block = if let Some(last_block) = hex_decode_0x_u64(&next_block) {
+                (last_block - state.last_block) / 2 + state.last_block
+            } else {
+                let json_rpc_payload = json!({
+                    "jsonrpc":"2.0",
+                    "method":"eth_blockNumber",
+                    "params":[]
+                });
+                let result: Value =
+                    match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_blocknumber)
+                        .await?
+                    {
+                        Ok(bytes) => serde_json::from_slice(&bytes)
+                            .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
+                        Err(err) => {
+                            // TODO: log error and skip (because this will be called again)
+                            return Err(ReturnError::JsonParseError(format!("{:?}", err)));
+                        }
+                    };
+                let block_number = result
+                    .as_object()
+                    .and_then(|x| x.get("result"))
+                    .and_then(|x| x.as_str())
+                    .and_then(hex_decode_0x_u64)
+                    .ok_or(ReturnError::JsonParseError(
+                        "No valid result block number is found".to_string(),
+                    ))?;
+                (block_number - state.last_block) / 2 + state.last_block
+            };
+            if last_block == state.last_block + 1 {
+                // TODO: critical error! One single block exceeds buffer limit!
+            }
+            CKICP_STATE.with(|ckicp_state| {
+                let mut ckicp_state = ckicp_state.borrow_mut();
+                let mut state = ckicp_state.get().0.clone();
+                state.as_mut().map(|s| {
+                    s.next_blocks.push_front(last_block);
+                });
+                ckicp_state.set(Cbor(state)).unwrap();
             });
-            let logs: Value =
-                match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_getlogs).await? {
-                    Ok(bytes) => serde_json::from_slice(&bytes)
-                        .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
-                    Err(err) => return Err(ReturnError::EthRpcError(err)),
-                };
+            Err(ReturnError::EthRpcError(EthRpcError::HttpRequestError {
+                code,
+                message,
+            }))
+        }
+        Err(err) => return Err(ReturnError::EthRpcError(err)),
+        Ok(bytes) => {
+            let logs: Value = serde_json::from_slice(&bytes)
+                .map_err(|err| ReturnError::JsonParseError(err.to_string()))?;
+            ic_cdk::println!("{}", logs.to_string());
+            // Find the highest block number from log. This is an estimate since
+            // we don't know the block number of the latest "safe" block.
+            let last_block = last_block_number_from_event_logs(&logs);
             // TODO: process_logs may throw errors that requires futher processing: range is too big,
             // or number of returned bytes exceed limit. This can handled by halving the range and re-try.
             let result = process_logs(logs).await?;
@@ -344,57 +398,15 @@ pub async fn sync_event_logs() -> Result<String, ReturnError> {
                 state.as_mut().map(|s| {
                     if let Some(last_block) = s.next_blocks.pop_front() {
                         s.last_block = last_block;
+                    } else {
+                        if let Some(last_block) = last_block {
+                            s.last_block = last_block;
+                        }
                     }
                 });
                 ckicp_state.set(Cbor(state)).unwrap();
             });
             Ok(result)
-        }
-        None => {
-            // get latest block number, and push to state.next_block_starts array.
-            let json_rpc_payload = json!({
-                "jsonrpc":"2.0",
-                "method":"eth_blockNumber",
-                "params":[]
-            });
-            let result: Value =
-                match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_blocknumber).await? {
-                    Ok(bytes) => serde_json::from_slice(&bytes)
-                        .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
-                    Err(err) => {
-                        // TODO: log error and skip (because this will be called again)
-                        return Err(ReturnError::JsonParseError(format!("{:?}", err)));
-                    }
-                };
-            let block_number = match result
-                .as_object()
-                .and_then(|x| x.get("result"))
-                .and_then(|x| x.as_str())
-                .and_then(|x| hex::decode(&x[2..]).ok())
-                .map(|x| {
-                    let mut bytes = [0; 8];
-                    let len = x.len().min(8);
-                    bytes[(8 - len)..].copy_from_slice(&x[(x.len() - len)..]);
-                    u64::from_be_bytes(bytes)
-                }) {
-                Some(block_number) => block_number,
-                None => {
-                    return Err(ReturnError::JsonParseError(
-                        "cannot parse result as a block number".to_string(),
-                    ));
-                }
-            };
-            CKICP_STATE.with(|ckicp_state| {
-                let mut ckicp_state = ckicp_state.borrow_mut();
-                let mut state = ckicp_state.get().0.clone();
-                state.as_mut().map(|s| match s.next_blocks.pop_back() {
-                    None => s.next_blocks.push_back(block_number),
-                    Some(x) if x < block_number => s.next_blocks.push_back(x),
-                    _ => (),
-                });
-                ckicp_state.set(Cbor(state)).unwrap();
-            });
-            Ok(String::new())
         }
     }
 }

@@ -21,6 +21,7 @@ pub struct CkicpConfig {
     pub ckicp_eth_erc20_address: String,
     pub ckicp_eth_address: [u8; 20], // Deploy using CREATE2 to get the same address
     pub ckicp_fee: Amount,
+    pub ckicp_getlogs_topics: Vec<String>,
     pub expiry_seconds: u64,
     pub target_chain_ids: Vec<u8>,
     pub max_response_bytes: u64,

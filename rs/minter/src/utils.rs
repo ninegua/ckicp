@@ -5,6 +5,37 @@ use icrc_ledger_types::icrc1::account::{Account, Subaccount};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
+// Decode hex string regardless of whether it has 0x as a prefix.
+// Note that strings without 0x prefix is also treated as hex.
+pub fn hex_decode_0x(s: &str) -> Option<Vec<u8>> {
+    let s = if s.starts_with("0x") || s.starts_with("0X") {
+        &s[2..]
+    } else {
+        s
+    };
+    // the 'hex' library doesn't handle odd number of digits, but we do.
+    if s.len() & 1 == 1 {
+        let mut t = "0".to_string();
+        t.push_str(s);
+        hex::decode(t).ok()
+    } else {
+        hex::decode(s).ok()
+    }
+}
+
+// Decode hex string as u64 number.
+pub fn hex_decode_0x_u64(s: &str) -> Option<u64> {
+    let x = hex_decode_0x(s)?;
+    let mut bytes = [0; 8];
+    let len = x.len().min(8);
+    // Not an u64 if leading bytes have non-zeros.
+    if !x[..(x.len() - len)].iter().all(|x| *x == 0) {
+        return None;
+    }
+    bytes[(8 - len)..].copy_from_slice(&x[(x.len() - len)..]);
+    Some(u64::from_be_bytes(bytes))
+}
+
 // This function is copied from ic/rs/ethereum/cketh/minter/src/eth_logs/mod.rs
 fn parse_principal_from_slice(slice: &[u8]) -> Result<Principal, String> {
     const ANONYMOUS_PRINCIPAL_BYTES: [u8; 1] = [4];
@@ -98,6 +129,18 @@ impl std::fmt::Display for LogError {
     }
 }
 
+pub fn last_block_number_from_event_logs(events: &serde_json::Value) -> Option<u64> {
+    events
+        .as_object()
+        .and_then(|x| x.get("result"))
+        .and_then(|x| x.as_array())
+        .and_then(|x| x.last())
+        .and_then(|x| x.as_object())
+        .and_then(|x| x.get("blockNumber"))
+        .and_then(|x| x.as_str())
+        .and_then(hex_decode_0x_u64)
+}
+
 pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogError> {
     if let Some(error) = events
         .as_object()
@@ -123,7 +166,7 @@ pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogE
                 .as_object()
                 .and_then(|x| x.get("blockNumber"))
                 .and_then(|x| x.as_str())
-                .and_then(|x| hex::decode(&x[2..]).ok())
+                .and_then(hex_decode_0x)
                 .map(|x| {
                     let mut bytes = [0; 8];
                     let len = x.len().min(8);
@@ -134,7 +177,7 @@ pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogE
                 .as_object()
                 .and_then(|x| x.get("logIndex"))
                 .and_then(|x| x.as_str())
-                .and_then(|x| hex::decode(&x[2..]).ok())
+                .and_then(hex_decode_0x)
                 .map(|x| {
                     let mut bytes = [0; 8];
                     let len = x.len().min(8);
@@ -145,7 +188,7 @@ pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogE
                 .as_object()
                 .and_then(|x| x.get("data"))
                 .and_then(|x| x.as_str())
-                .and_then(|x| hex::decode(&x[2..]).ok());
+                .and_then(hex_decode_0x);
             let topics = r
                 .as_object()
                 .and_then(|x| x.get("topics"))
@@ -153,7 +196,7 @@ pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogE
                 .map(|x| {
                     x.into_iter()
                         .filter_map(|x| x.as_str())
-                        .filter_map(|x| hex::decode(&x[2..]).ok())
+                        .filter_map(hex_decode_0x)
                         .collect()
                 });
             match (block_number, log_index, data, topics) {
@@ -440,7 +483,9 @@ pub fn always_fail(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
 
 #[test]
 fn test_parse_burn_to_icp() {
-    let value = serde_json::json!({"id":null,"jsonrpc":"2.0","result":[{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7","blockNumber":"0x93fd3b","data":"0x000000000000000000000000000000000000000000000000016345785d8a0000","logIndex":"0x32","removed":false,"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000002c91e73a358e6f0aff4b9200c8bad0d4739a70dd","0x0000000000000000000000000000000000000000000000000000000000000000"],"transactionHash":"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1","transactionIndex":"0x1e"},{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7","blockNumber":"0x93fd3b","data":"0x0000000000000000000000000000000000000000000000000000000000989680","logIndex":"0x33","removed":false,"topics":["0x7fe818d2b919ac5cc197458482fab0d4285d783795541be06864b0baa6ac2f5c","0x9e7d426db28fa46d013ad4c9955074e3946ab25203eece542b098f1c02000000","0x0000000000000000000000000000000000000000000000000000000000000000"],"transactionHash":"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1","transactionIndex":"0x1e"},{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0xc502ea9bc3955ff179de881dce2ede89fcc4068adc4e197f138ea4c49c6efb2a","blockNumber":"0x944078","data":"0x0000000000000000000000000000000000000000000000000000000000989680","logIndex":"0x93","removed":false,"topics":["0xa6a16062bb41b9bcfb300790709ad9b778bcb5cdcf87dfa633ab3adfd8a7ab59","0x9bf916c86e344b8a0aaac73271ae0612e8212d0bd59e30db38281982f46d3d2b"],"transactionHash":"0x335791840b4d8b2edfb6018e7e1dc62ba1d81cd0fa46785ccc672e7c491e365d","transactionIndex":"0x57"}]});
+    let value = serde_json::json!({"id":null,"jsonrpc":"2.0","result":[{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7","blockNumber":"0x93fd3b","data":"0x000000000000000000000000000000000000000000000000016345785d8a0000","logIndex":"0x32","removed":false,"topics":["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef","0x0000000000000000000000002c91e73a358e6f0aff4b9200c8bad0d4739a70dd","0x0000000000000000000000000000000000000000000000000000000000000000"],"transactionHash":"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1","transactionIndex":"0x1e"},{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0x8900bc3dbd462e7a9f76bfac3199729943e677d7d44bd50556b27f935a705fc7","blockNumber":"0x93fd3b","data":"0x0000000000000000000000000000000000000000000000000000000000989680","logIndex":"0x33","removed":false,"topics":["0x7fe818d2b919ac5cc197458482fab0d4285d783795541be06864b0baa6ac2f5c","0x1d9e7d426db28fa46d013ad4c9955074e3946ab25203eece542b098f1c020000","0x0000000000000000000000000000000000000000000000000000000000000000"],"transactionHash":"0xcea897ee46a9fbe6ce6f2945b172ebc224d2871f70b35de35600be9d71a05dd1","transactionIndex":"0x1e"},{"address":"0x8c283b98edeb405816fd1d321005df4d3aa956ba","blockHash":"0xc502ea9bc3955ff179de881dce2ede89fcc4068adc4e197f138ea4c49c6efb2a","blockNumber":"0x944078","data":"0x0000000000000000000000000000000000000000000000000000000000989680","logIndex":"0x93","removed":false,"topics":["0xa6a16062bb41b9bcfb300790709ad9b778bcb5cdcf87dfa633ab3adfd8a7ab59","0x9bf916c86e344b8a0aaac73271ae0612e8212d0bd59e30db38281982f46d3d2b"],"transactionHash":"0x335791840b4d8b2edfb6018e7e1dc62ba1d81cd0fa46785ccc672e7c491e365d","transactionIndex":"0x57"}]});
+    // test highest block number
+    assert_eq!(last_block_number_from_event_logs(&value), Some(0x944078));
 
     let mut data_and_topics = read_event_logs(&value).unwrap();
     assert_eq!(data_and_topics.len(), 3);
@@ -497,4 +542,41 @@ fn test_parse_burn_to_icp() {
         .cloned()
         .and_then(|x| x.into_uint())
         .is_some());
+}
+
+#[test]
+fn test_hex_decode_0x() {
+    assert_eq!(hex_decode_0x("0xabcd"), Some(vec![0xab, 0xcd]));
+    assert_eq!(hex_decode_0x("abcd"), Some(vec![0xab, 0xcd]));
+    assert_eq!(hex_decode_0x("0x123"), Some(vec![0x1, 0x23]));
+    assert_eq!(hex_decode_0x("123"), Some(vec![0x1, 0x23]));
+    assert_eq!(hex_decode_0x("123@"), None);
+    assert_eq!(hex_decode_0x(" 123"), None);
+    assert_eq!(hex_decode_0x("0x 123"), None);
+    assert_eq!(hex_decode_0x(""), Some(vec![]));
+    assert_eq!(hex_decode_0x("0x"), Some(vec![]));
+    assert_eq!(hex_decode_0x(" "), None);
+}
+
+#[test]
+fn test_hex_decode_0x_u64() {
+    assert_eq!(hex_decode_0x_u64("0xabcd"), Some(0xabcd));
+    assert_eq!(hex_decode_0x_u64("abcd"), Some(0xabcd));
+    assert_eq!(hex_decode_0x_u64("0x123"), Some(0x123));
+    assert_eq!(hex_decode_0x_u64("123"), Some(0x123));
+    assert_eq!(hex_decode_0x_u64("123@"), None);
+    assert_eq!(hex_decode_0x_u64(" 123"), None);
+    assert_eq!(hex_decode_0x_u64("0x 123"), None);
+    assert_eq!(hex_decode_0x_u64(""), Some(0));
+    assert_eq!(hex_decode_0x_u64("0x"), Some(0));
+    assert_eq!(hex_decode_0x_u64(" "), None);
+    assert_eq!(
+        hex_decode_0x_u64("0xdeadbeef12345678"),
+        Some(0xdeadbeef12345678)
+    );
+    assert_eq!(
+        hex_decode_0x_u64("0x0deadbeef12345678"),
+        Some(0xdeadbeef12345678)
+    );
+    assert_eq!(hex_decode_0x_u64("0x1deadbeef12345678"), None);
 }
