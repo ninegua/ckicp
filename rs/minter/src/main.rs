@@ -341,7 +341,7 @@ async fn eth_rpc_call(
 /// Look up ethereum event log of the given block for Burn events.
 /// Process those that have not yet been processed.
 ///
-/// (TODO): How to avoid DoS attack?
+/// This is can only be called by owner and only meant for debugging purposes.
 #[update]
 #[candid_method(update)]
 #[modifiers("only_owner")]
