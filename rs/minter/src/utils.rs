@@ -1,6 +1,7 @@
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::{Account, Subaccount};
 use sha2::{Digest, Sha256};
+use std::fmt::Write;
 
 pub fn subaccount_from_principal(principal: &Principal) -> Subaccount {
     let mut subaccount = [0; 32];
@@ -28,6 +29,21 @@ pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     id
 }
 
+pub fn decode_hex(s: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect()
+}
+
+pub fn encode_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
+}
+
 // In the following, we register a custom getrandom implementation because
 // otherwise getrandom (which is a dependency of k256) fails to compile.
 // This is necessary because getrandom by default fails to compile for the
@@ -35,6 +51,7 @@ pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
 // Our custom implementation always fails, which is sufficient here because
 // we only use the k256 crate for verifying secp256k1 signatures, and such
 // signature verification does not require any randomness.
+
 getrandom::register_custom_getrandom!(always_fail);
 pub fn always_fail(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
     Err(getrandom::Error::UNSUPPORTED)

@@ -1,4 +1,13 @@
 use ic_stable_structures::{BoundedStorable, Storable};
+use k256::{
+    ecdsa::{RecoveryId, Signature, VerifyingKey},
+    elliptic_curve::{
+        generic_array::{typenum::Unsigned, GenericArray},
+        Curve,
+    },
+    EncodedPoint, PublicKey, Secp256k1,
+};
+use sha3::Keccak256;
 use std::borrow::Cow;
 
 #[derive(Clone, candid::CandidType, serde::Serialize, serde::Deserialize)]
@@ -63,4 +72,31 @@ impl EcdsaSignature {
             v,
         }
     }
+}
+
+pub fn ethereum_address_from_public_key(public_key: &[u8]) -> Result<[u8; 20], String> {
+    let uncompressed_pubkey = VerifyingKey::from_sec1_bytes(public_key)
+        .map_err(|_| "Pubkey parse error")?
+        //.unwrap()
+        .to_encoded_point(false);
+    let ethereum_pubkey = &uncompressed_pubkey.as_bytes()[1..]; // trim off the first 0x04 byte
+    use sha3::Digest;
+    let mut hasher = Keccak256::new();
+    hasher.update(ethereum_pubkey);
+    let hashed = hasher.finalize();
+    Ok((&hashed[12..32]).try_into().unwrap())
+}
+
+#[test]
+fn test_calculate_eth_address() {
+    use crate::utils::decode_hex;
+    let public_key = decode_hex("04A4A4C5160DFA830E9D5FAD6DBA5248E7A9C783C30974A3382247DCE5A815DBAA4CB31812FD016561DE57A5A53EF527499031705BE824016842688B498F61FDE7").unwrap();
+
+    let tecdsa_signer_address: [u8; 20] = ethereum_address_from_public_key(&public_key).unwrap();
+    assert_eq!(
+        tecdsa_signer_address,
+        decode_hex("3b75ea5c82e96d9489ed740d455da4900f152f95")
+            .unwrap()
+            .as_slice()
+    );
 }

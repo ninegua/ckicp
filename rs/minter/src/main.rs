@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 #![allow(unused_imports)]
 
-use ckicp_minter::crypto::EcdsaSignature;
+use ckicp_minter::crypto::*;
 use ckicp_minter::memory::*;
 use ckicp_minter::tecdsa::{ECDSAPublicKeyReply, ManagementCanister, SignWithECDSAReply};
 use ckicp_minter::utils::*;
@@ -25,7 +25,8 @@ use rustic::utils::*;
 use rustic_macros::modifiers;
 
 use serde_bytes::ByteBuf;
-use sha2::{Digest, Sha256};
+//use sha2::Sha256;
+use sha3::Keccak256;
 use zeroize::ZeroizeOnDrop;
 
 use std::borrow::Cow;
@@ -57,6 +58,7 @@ pub enum ReturnError {
     Expired,
     InterCanisterCallError,
     TecdsaSignatureError,
+    CryptoError,
     EventSeen,
     TransferError,
     MemoryError,
@@ -183,7 +185,8 @@ pub async fn mint_ckicp(
     payload_to_sign[128..160].copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
     payload_to_sign[160..192].copy_from_slice(&config.ckicp_eth_address);
 
-    let mut hasher = Sha256::new();
+    use sha3::Digest;
+    let mut hasher = Keccak256::new();
     hasher.update(payload_to_sign);
     let hashed = hasher.finalize();
     let digest = hashed.to_vec();
@@ -212,18 +215,11 @@ pub async fn mint_ckicp(
 
     let v = recid.is_y_odd() as u8 + 27;
 
-    // TODO: Add signature to map for future queries
-    // SIGNATURE_MAP.with(|sm| {
-    //     let mut sm = sm.borrow_mut();
-    //     sm.insert(
-    //         msg_id,
-    //         EcdsaSignature {
-    //             r: signature[0..32],
-    //             s: signature[32..64],
-    //             v: signature[64],
-    //         },
-    //     );
-    // });
+    // Add signature to map for future queries
+    SIGNATURE_MAP.with(|sm| {
+        let mut sm = sm.borrow_mut();
+        sm.insert(msg_id, EcdsaSignature::from_signature_v(&signature, v));
+    });
 
     update_status(msg_id, amount, expiry, MintState::Signed);
 
@@ -307,16 +303,8 @@ pub async fn update_ckicp_pubkey() -> Result<(), ReturnError> {
         .map_err(|_| ReturnError::TecdsaSignatureError)?;
     state.tecdsa_pubkey = res.public_key.clone();
 
-    let uncompressed_pubkey = VerifyingKey::from_sec1_bytes(&res.public_key)
-        .unwrap()
-        .to_encoded_point(false);
-    let ethereum_pubkey = &uncompressed_pubkey.as_bytes()[1..]; // trim off the first 0x04 byte
-    let mut hasher = Sha256::new();
-    hasher.update(ethereum_pubkey);
-    let hashed = hasher.finalize();
-    let address_bytes = &hashed[12..];
-
-    state.tecdsa_signer_address = address_bytes.try_into().unwrap();
+    state.tecdsa_signer_address =
+        ethereum_address_from_public_key(&res.public_key).map_err(|_| ReturnError::CryptoError)?;
 
     CKICP_STATE
         .with(|ckicp_state| {
