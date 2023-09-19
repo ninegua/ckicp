@@ -653,7 +653,7 @@ pub async fn update_ckicp_state() {
     let config: CkicpConfig = get_ckicp_config();
     let mut state: CkicpState = get_ckicp_state();
     // TODO: Update tecdsa signer key and calculate signer ETH address
-    state.last_block = config.starting_block_number;
+    state.last_block = config.last_synced_block_number;
 
     CKICP_STATE.with(|ckicp_state| {
         let mut ckicp_state = ckicp_state.borrow_mut();

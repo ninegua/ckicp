@@ -25,7 +25,7 @@ pub struct CkicpConfig {
     pub expiry_seconds: u64,
     pub target_chain_ids: Vec<u8>,
     pub max_response_bytes: u64,
-    pub starting_block_number: u64,
+    pub last_synced_block_number: u64,
     pub cycle_cost_of_eth_getlogs: u128,
     pub cycle_cost_of_eth_blocknumber: u128,
     pub debug_log_level: u8,

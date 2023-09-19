@@ -19,7 +19,7 @@ dfx canister $NETWORK call minter set_ckicp_config "(record {
   ledger_canister_id = principal \"$ICP_LEDGER_CANISTER_ID\";
   ckicp_getlogs_topics = vec { \"0xa6a16062bb41b9bcfb300790709ad9b778bcb5cdcf87dfa633ab3adfd8a7ab59\"; \"0x7fe818d2b919ac5cc197458482fab0d4285d783795541be06864b0baa6ac2f5c\" } : vec text;
   ckicp_fee = 10000 : nat64;
-  starting_block_number = 9717328 : nat64;
+  last_synced_block_number = 9717327 : nat64;
   cycle_cost_of_eth_getlogs = 900000000 : nat;
   cycle_cost_of_eth_blocknumber = 900000000 : nat;
   debug_log_level = 3;
