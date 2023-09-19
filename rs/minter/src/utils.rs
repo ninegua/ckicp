@@ -88,7 +88,7 @@ pub fn principal_from_subaccount(subaccount: &Subaccount) -> Principal {
 pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     let mut hasher = Sha256::new();
     hasher.update(caller);
-    hasher.update(&nonce.to_le_bytes());
+    hasher.update(nonce.to_le_bytes());
     let hashed = hasher.finalize();
     // Return XOR of 128 bit chunks of the hashed principal
     let mut id = 0;
@@ -98,32 +98,32 @@ pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     id
 }
 
-pub struct LogEntry {
+pub struct EventEntry {
     pub event_id: EventId,
     data: Vec<u8>,
     topics: Vec<Vec<u8>>,
 }
 
 #[derive(CandidType, candid::Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct LogError {
+pub struct EventError {
     pub code: Option<u64>,
     pub message: String,
 }
 
-impl From<&'_ str> for LogError {
+impl From<&'_ str> for EventError {
     fn from(msg: &'_ str) -> Self {
-        LogError {
+        EventError {
             code: None,
             message: msg.to_string(),
         }
     }
 }
 
-impl std::fmt::Display for LogError {
+impl std::fmt::Display for EventError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "LogError {{ code: {:?}, message: {} }}",
+            "EventError {{ code: {:?}, message: {} }}",
             self.code, self.message
         )
     }
@@ -141,13 +141,13 @@ pub fn last_block_number_from_event_logs(events: &serde_json::Value) -> Option<u
         .and_then(hex_decode_0x_u64)
 }
 
-pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogError> {
+pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<EventEntry>, EventError> {
     if let Some(error) = events
         .as_object()
         .and_then(|x| x.get("error"))
         .and_then(|x| x.as_object())
     {
-        Err(LogError {
+        Err(EventError {
             code: error.get("code").and_then(|x| x.as_u64()),
             message: error
                 .get("message")
@@ -194,14 +194,14 @@ pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogE
                 .and_then(|x| x.get("topics"))
                 .and_then(|x| x.as_array())
                 .map(|x| {
-                    x.into_iter()
+                    x.iter()
                         .filter_map(|x| x.as_str())
                         .filter_map(hex_decode_0x)
                         .collect()
                 });
             match (block_number, log_index, data, topics) {
                 (Some(block_number), Some(log_index), Some(data), Some(topics)) => {
-                    entries.push(LogEntry {
+                    entries.push(EventEntry {
                         event_id: EventId {
                             block_number,
                             log_index,
@@ -228,7 +228,7 @@ pub fn read_event_logs(events: &serde_json::Value) -> Result<Vec<LogEntry>, LogE
     }
 }
 
-pub fn parse_transfer(entry: &LogEntry) -> Result<ethabi::Log, String> {
+pub fn parse_transfer(entry: &EventEntry) -> Result<ethabi::Log, String> {
     use ethabi::*;
 
     let params = vec![
@@ -257,7 +257,7 @@ pub fn parse_transfer(entry: &LogEntry) -> Result<ethabi::Log, String> {
     let topics = entry
         .topics
         .iter()
-        .map(|topic| Hash::from_slice(&topic))
+        .map(|topic| Hash::from_slice(topic))
         .collect();
     let rawlog = RawLog {
         topics,
@@ -267,7 +267,7 @@ pub fn parse_transfer(entry: &LogEntry) -> Result<ethabi::Log, String> {
     transfer.parse_log(rawlog).map_err(|err| format!("{}", err))
 }
 
-pub fn parse_burn_to_icp(entry: &LogEntry) -> Result<ethabi::Log, String> {
+pub fn parse_burn_to_icp(entry: &EventEntry) -> Result<ethabi::Log, String> {
     use ethabi::*;
 
     let params = vec![
@@ -296,7 +296,7 @@ pub fn parse_burn_to_icp(entry: &LogEntry) -> Result<ethabi::Log, String> {
     let topics = entry
         .topics
         .iter()
-        .map(|topic| Hash::from_slice(&topic))
+        .map(|topic| Hash::from_slice(topic))
         .collect();
     let rawlog = RawLog {
         topics,
@@ -307,7 +307,7 @@ pub fn parse_burn_to_icp(entry: &LogEntry) -> Result<ethabi::Log, String> {
         .map_err(|err| format!("{}", err))
 }
 
-pub fn parse_burn_to_icp_account_id(entry: &LogEntry) -> Result<ethabi::Log, String> {
+pub fn parse_burn_to_icp_account_id(entry: &EventEntry) -> Result<ethabi::Log, String> {
     use ethabi::*;
 
     let params = vec![
@@ -331,7 +331,7 @@ pub fn parse_burn_to_icp_account_id(entry: &LogEntry) -> Result<ethabi::Log, Str
     let topics = entry
         .topics
         .iter()
-        .map(|topic| Hash::from_slice(&topic))
+        .map(|topic| Hash::from_slice(topic))
         .collect();
     let rawlog = RawLog {
         topics,
@@ -365,7 +365,7 @@ impl std::fmt::Display for BurnEvent {
                     account.owner,
                     account
                         .subaccount
-                        .map(|x| hex::encode(x))
+                        .map(hex::encode)
                         .unwrap_or_else(|| "None".to_string()),
                     amount
                 )
@@ -394,7 +394,7 @@ impl From<EventId> for u128 {
     }
 }
 
-pub fn parse_burn_event(entry: &LogEntry) -> Result<BurnEvent, String> {
+pub fn parse_burn_event(entry: &EventEntry) -> Result<BurnEvent, String> {
     if let Ok(burn) = parse_burn_to_icp(entry).map(log_to_map) {
         let amount = burn
             .get("amount")

@@ -70,7 +70,10 @@ pub enum ReturnError {
     TransferError(String),
     EthRpcError(EthRpcError),
     JsonParseError(String),
-    EventLogError(LogError),
+    EventLogError(EventError),
+    OutOfMemory,
+    MaxResponseBytesExceeded,
+    MaxResponseBytesNotEnough,
 }
 
 #[init]
@@ -113,6 +116,64 @@ pub fn get_nonce() -> u32 {
         let nonce_map = nonce_map.borrow();
         nonce_map.get(&caller_subaccount).unwrap_or(0)
     })
+}
+
+// The following defines log level.
+#[derive(Copy, Clone, Debug)]
+pub enum LogLevel {
+    ERROR = 0,
+    WARN = 1,
+    INFO = 2,
+    DEBUG = 3,
+}
+
+use LogLevel::*;
+
+#[derive(Clone, CandidType, serde::Deserialize)]
+pub struct LogView {
+    from: Option<u64>,
+    to: Option<u64>,
+}
+
+/// View debug logs in the given range (not including 'to').
+/// If 'from' is missing, 0 is used.
+/// If 'to' is missing, current length of all logs is used.
+#[query]
+#[candid_method(query)]
+#[modifiers("only_owner")]
+pub async fn view_debug_log(view: LogView) -> Vec<String> {
+    let debug_log_len = DEBUG_LOG.with(|log| log.borrow().len());
+    let from = view.from.unwrap_or_default();
+    let to = view.to.unwrap_or(debug_log_len).min(debug_log_len);
+    let mut logs = Vec::new();
+    DEBUG_LOG.with(|log| {
+        let debug_log = log.borrow();
+        for i in from..to {
+            logs.push(debug_log.get(i).clone().unwrap_or_default())
+        }
+    });
+    logs
+}
+
+/// Add a line of given log level to the debug log, only when
+/// the given level is smaller than or equal to config.debug_log_level.
+pub fn debug_log(level: LogLevel, line: String) -> Result<(), ReturnError> {
+    let config = get_ckicp_config();
+    if (level as u8) <= config.debug_log_level {
+        DEBUG_LOG.with(|log| {
+            log.borrow()
+                .append(&format!(
+                    "{} {:?} {}",
+                    canister_time() / 1_000_000,
+                    level,
+                    line
+                ))
+                .map(|_| ())
+                .map_err(|_| ReturnError::OutOfMemory)
+        })
+    } else {
+        Ok(())
+    }
 }
 
 /// Nonce starts at 1 and is incremented for each call to mint_ckicp
@@ -236,7 +297,11 @@ async fn eth_rpc_call(
     cycles: u128,
 ) -> Result<Result<Vec<u8>, EthRpcError>, ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
-    let rpc_result: Result<Vec<u8>, EthRpcError> = canister_call_with_payment(
+    debug_log(
+        DEBUG,
+        format!("Sending json_rpc_request {}", json_rpc_payload),
+    )?;
+    let rpc_result: Result<Result<Vec<u8>, EthRpcError>, _> = canister_call_with_payment(
         config.eth_rpc_canister_id,
         "json_rpc_request",
         (
@@ -248,9 +313,29 @@ async fn eth_rpc_call(
         |r| candid::decode_one(r),
         cycles,
     )
-    .await
-    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
-    Ok(rpc_result)
+    .await;
+    match rpc_result {
+        Ok(Ok(bytes)) => {
+            debug_log(
+                DEBUG,
+                format!(
+                    "Received rpc result {}",
+                    String::from_utf8(bytes.clone())
+                        .unwrap_or_else(|_| "(invalid utf8 encoding)".to_string())
+                ),
+            )?;
+            Ok(Ok(bytes))
+        }
+        Ok(Err(err)) => {
+            debug_log(DEBUG, format!("Received rpc error {:?}", err))?;
+            Ok(Err(err))
+        }
+        Err((err_code, err_msg)) => {
+            let err = format!("{{code: {:?}, message: {}}}", err_code, err_msg);
+            debug_log(DEBUG, format!("Received error {}", err))?;
+            Err(ReturnError::InterCanisterCallError(err))
+        }
+    }
 }
 
 /// Look up ethereum event log of the given block for Burn events.
@@ -260,7 +345,7 @@ async fn eth_rpc_call(
 #[update]
 #[candid_method(update)]
 #[modifiers("only_owner")]
-pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
+pub async fn process_block(block_hash: String) -> Result<(), ReturnError> {
     // get log events from block with the given block_hash
     // NOTE: if log exceeds pre-allocated space, we need manual intervention.
     let config: CkicpConfig = get_ckicp_config();
@@ -273,8 +358,8 @@ pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
         }],
     });
 
-    let logs: Value = match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_getlogs).await?
-    {
+    let result = eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_getlogs).await?;
+    let logs: Value = match result {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
         Err(err) => return Err(ReturnError::EthRpcError(err)),
@@ -283,27 +368,41 @@ pub async fn process_block(block_hash: String) -> Result<String, ReturnError> {
 }
 
 /// Given some event logs, process burn events in them.
-async fn process_logs(logs: Value) -> Result<String, ReturnError> {
+async fn process_logs(logs: Value) -> Result<(), ReturnError> {
     let entries = read_event_logs(&logs).map_err(ReturnError::EventLogError)?;
-    let mut transferred = Vec::new();
+    debug_log(DEBUG, format!("Processing {} log entries", entries.len()))?;
     for entry in entries {
         match parse_burn_event(&entry) {
             Ok(burn) => {
                 if let Err(err) = release_icp(burn.clone(), entry.event_id).await {
-                    // TODO: shall we log this error?
-                    transferred.push(format!("error {:?}", err));
+                    debug_log(
+                        DEBUG,
+                        format!(
+                            "Error {:?} in releasing ICP {} of event {:?}",
+                            err, burn, entry.event_id
+                        ),
+                    )?;
                 } else {
-                    transferred.push(format!("transferred {} {:?}", burn, entry.event_id));
+                    debug_log(
+                        DEBUG,
+                        format!("Processed transfer {} of event {:?}", burn, entry.event_id),
+                    )?;
                 }
             }
             Err(err) => {
-                // Skip this error (which is usually due to different event types)
-                // TODO: shall we log this error?
+                // parsing error? unknown event type? They should be investigated!
+                debug_log(
+                    WARN,
+                    format!(
+                        "Skip processing event {:?} due to error {:?}",
+                        entry.event_id, err,
+                    ),
+                )?;
             }
         }
     }
 
-    Ok(transferred.join("\n"))
+    Ok(())
 }
 
 /// Sync event logs of the ckICP ERC-20 contract via RPC.
@@ -311,7 +410,7 @@ async fn process_logs(logs: Value) -> Result<String, ReturnError> {
 #[update]
 #[candid_method(update)]
 #[modifiers("only_owner")]
-pub async fn sync_event_logs() -> Result<String, ReturnError> {
+pub async fn sync_event_logs() -> Result<(), ReturnError> {
     let _guard = ReentrancyGuard::new();
     // get log events from block with the given block_hash
     // NOTE: if log exceeds pre-allocated space, we need manual intervention.
@@ -321,7 +420,7 @@ pub async fn sync_event_logs() -> Result<String, ReturnError> {
         .next_blocks
         .pop_front()
         .map(|x| format!("{:#x}", x))
-        .unwrap_or("safe".to_string());
+        .unwrap_or_else(|| "safe".to_string());
 
     // get logs between last_block and next_block.
     let json_rpc_payload = json!({
@@ -334,8 +433,30 @@ pub async fn sync_event_logs() -> Result<String, ReturnError> {
             "topics": [ config.ckicp_getlogs_topics ],
         }],
     });
+    debug_log(
+        INFO,
+        format!(
+            "Syncing event logs from block {} to {}",
+            state.last_block + 1,
+            hex_decode_0x_u64(&next_block)
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| next_block.clone())
+        ),
+    )?;
     match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_getlogs).await? {
-        Err(EthRpcError::HttpRequestError { code, message }) => {
+        Err(EthRpcError::HttpRequestError { code: _, message })
+            if message.contains("body exceeds size limit") =>
+        {
+            debug_log(
+                WARN,
+                format!(
+                    "RPC result exceeds buffer size limit, trying to halve range [{}, {})",
+                    state.last_block + 1,
+                    hex_decode_0x_u64(&next_block)
+                        .map(|x| x.to_string())
+                        .unwrap_or_else(|| next_block.clone())
+                ),
+            )?;
             let last_block = if let Some(last_block) = hex_decode_0x_u64(&next_block) {
                 (last_block - state.last_block) / 2 + state.last_block
             } else {
@@ -344,69 +465,71 @@ pub async fn sync_event_logs() -> Result<String, ReturnError> {
                     "method":"eth_blockNumber",
                     "params":[]
                 });
-                let result: Value =
-                    match eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_blocknumber)
-                        .await?
-                    {
-                        Ok(bytes) => serde_json::from_slice(&bytes)
-                            .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
-                        Err(err) => {
-                            // TODO: log error and skip (because this will be called again)
-                            return Err(ReturnError::JsonParseError(format!("{:?}", err)));
-                        }
-                    };
+                let result =
+                    eth_rpc_call(json_rpc_payload, config.cycle_cost_of_eth_blocknumber).await;
+                debug_log(DEBUG, format!("Syncing event logs received {:?}", result))?;
+                let result: Value = match result? {
+                    Ok(bytes) => serde_json::from_slice(&bytes)
+                        .map_err(|err| ReturnError::JsonParseError(err.to_string()))?,
+                    Err(err) => {
+                        return Err(ReturnError::JsonParseError(format!("{:?}", err)));
+                    }
+                };
                 let block_number = result
                     .as_object()
                     .and_then(|x| x.get("result"))
                     .and_then(|x| x.as_str())
                     .and_then(hex_decode_0x_u64)
-                    .ok_or(ReturnError::JsonParseError(
-                        "No valid result block number is found".to_string(),
-                    ))?;
+                    .ok_or_else(|| {
+                        ReturnError::JsonParseError(
+                            "No valid result block number is found".to_string(),
+                        )
+                    })?;
+                debug_log(
+                    INFO,
+                    format!("Received latest block number {:?}", block_number),
+                )?;
                 (block_number - state.last_block) / 2 + state.last_block
             };
             if last_block == state.last_block + 1 {
-                // TODO: critical error! One single block exceeds buffer limit!
+                debug_log(
+                    ERROR,
+                    format!("Single block {} returns events exceeding max buffer size, requires manual intervention!", last_block),
+                )?;
+                return Err(ReturnError::MaxResponseBytesNotEnough);
             }
+
             CKICP_STATE.with(|ckicp_state| {
                 let mut ckicp_state = ckicp_state.borrow_mut();
                 let mut state = ckicp_state.get().0.clone();
-                state.as_mut().map(|s| {
+                if let Some(s) = state.as_mut() {
                     s.next_blocks.push_front(last_block);
-                });
+                };
                 ckicp_state.set(Cbor(state)).unwrap();
             });
-            Err(ReturnError::EthRpcError(EthRpcError::HttpRequestError {
-                code,
-                message,
-            }))
+            Err(ReturnError::MaxResponseBytesExceeded)
         }
-        Err(err) => return Err(ReturnError::EthRpcError(err)),
+        Err(err) => Err(ReturnError::EthRpcError(err)),
         Ok(bytes) => {
             let logs: Value = serde_json::from_slice(&bytes)
                 .map_err(|err| ReturnError::JsonParseError(err.to_string()))?;
-            ic_cdk::println!("{}", logs.to_string());
             // Find the highest block number from log. This is an estimate since
             // we don't know the block number of the latest "safe" block.
             let last_block = last_block_number_from_event_logs(&logs);
-            // TODO: process_logs may throw errors that requires futher processing: range is too big,
-            // or number of returned bytes exceed limit. This can handled by halving the range and re-try.
-            let result = process_logs(logs).await?;
+            process_logs(logs).await?;
             CKICP_STATE.with(|ckicp_state| {
                 let mut ckicp_state = ckicp_state.borrow_mut();
                 let mut state = ckicp_state.get().0.clone();
-                state.as_mut().map(|s| {
+                if let Some(s) = state.as_mut() {
                     if let Some(last_block) = s.next_blocks.pop_front() {
                         s.last_block = last_block;
-                    } else {
-                        if let Some(last_block) = last_block {
-                            s.last_block = last_block;
-                        }
+                    } else if let Some(last_block) = last_block {
+                        s.last_block = last_block;
                     }
-                });
+                }
                 ckicp_state.set(Cbor(state)).unwrap();
             });
-            Ok(result)
+            Ok(())
         }
     }
 }
@@ -420,14 +543,18 @@ pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), Retu
     let event_seen = EVENT_ID_MAP.with(|event_id_map| {
         let mut event_id_map = event_id_map.borrow_mut();
         if event_id_map.contains_key(&event_id.into()) {
-            return true;
+            true
         } else {
             event_id_map.insert(event_id.into(), 1);
-            return false;
+            false
         }
     });
 
     if event_seen {
+        debug_log(
+            DEBUG,
+            format!("Event {:?} was seen. Skip releasing ICP", event_id),
+        )?;
         return Err(ReturnError::EventSeen);
     }
 
@@ -448,6 +575,7 @@ pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), Retu
                 memo: None,
                 created_at_time: None,
             };
+            debug_log(DEBUG, format!("Calling icrc1_transfer {:?}", tx_args))?;
             let tx_result: Result<Nat, icrc1::transfer::TransferError> = canister_call(
                 config.ledger_canister_id,
                 "icrc1_transfer",
@@ -478,6 +606,7 @@ pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), Retu
                 memo: ic_ledger_types::Memo(0),
                 created_at_time: None,
             };
+            debug_log(DEBUG, format!("Calling transfer {:?}", tx_args))?;
             let tx_result: Result<u64, ic_ledger_types::TransferError> = canister_call(
                 config.ledger_canister_id,
                 "transfer",

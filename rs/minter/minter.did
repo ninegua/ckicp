@@ -13,6 +13,7 @@ type CkicpConfig = record {
   ledger_canister_id : principal;
   ckicp_fee : nat64;
   cycle_cost_of_eth_getlogs : nat;
+  debug_log_level : nat8;
 };
 type CkicpState = record {
   next_blocks : vec nat64;
@@ -32,16 +33,20 @@ type EthRpcError = variant {
   NoPermission;
 };
 type LogError = record { code : opt nat64; message : text };
+type LogView = record { to : opt nat64; from : opt nat64 };
 type Result = variant { Ok : EcdsaSignature; Err : ReturnError };
-type Result_1 = variant { Ok : text; Err : ReturnError };
+type Result_1 = variant { Ok; Err : ReturnError };
 type ReturnError = variant {
   GenericError;
   JsonParseError : text;
+  MaxResponseBytesExceeded;
   TransferError : text;
   InterCanisterCallError : text;
   EventLogError : LogError;
+  MaxResponseBytesNotEnough;
   Unauthorized;
   EventSeen;
+  OutOfMemory;
   EthRpcError : EthRpcError;
   TecdsaSignatureError;
   InputError;
@@ -57,4 +62,5 @@ service : () -> {
   set_ckicp_config : (CkicpConfig) -> ();
   sync_event_logs : () -> (Result_1);
   update_ckicp_state : () -> ();
+  view_debug_log : (LogView) -> (vec text) query;
 }

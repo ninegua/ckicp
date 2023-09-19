@@ -1,7 +1,7 @@
 use candid::{CandidType, Decode, Encode, Principal};
 use ic_stable_structures::memory_manager::MemoryId;
 use ic_stable_structures::DefaultMemoryImpl;
-use ic_stable_structures::{BoundedStorable, StableBTreeMap, StableCell, StableVec, Storable};
+use ic_stable_structures::{BoundedStorable, Log, StableBTreeMap, StableCell, Storable};
 use rustic::memory_map::MEMORY_MANAGER;
 use rustic::types::{Cbor, RM, VM};
 use std::borrow::Cow;
@@ -28,6 +28,7 @@ pub struct CkicpConfig {
     pub starting_block_number: u64,
     pub cycle_cost_of_eth_getlogs: u128,
     pub cycle_cost_of_eth_blocknumber: u128,
+    pub debug_log_level: u8,
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
@@ -125,6 +126,8 @@ const NONCE_MAP_MEM_ID: MemoryId = MemoryId::new(0);
 const STATUS_MAP_MEM_ID: MemoryId = MemoryId::new(1);
 const SIGNATURE_MAP_MEM_ID: MemoryId = MemoryId::new(2);
 const EVENT_ID_MAP_MEM_ID: MemoryId = MemoryId::new(3);
+const DEBUG_LOG_IDX_ID: MemoryId = MemoryId::new(4);
+const DEBUG_LOG_MEM_ID: MemoryId = MemoryId::new(5);
 
 thread_local! {
 
@@ -164,5 +167,11 @@ thread_local! {
     pub static EVENT_ID_MAP: RefCell<StableBTreeMap<u128, u8, VM>> =
         MEMORY_MANAGER.with(|mm| {
             RefCell::new(StableBTreeMap::new(mm.borrow().get(EVENT_ID_MAP_MEM_ID)))
+    });
+
+    // TODO: make this persistent
+    pub static DEBUG_LOG: RefCell<Log<String, VM, VM>> =
+        MEMORY_MANAGER.with(|mm| {
+            RefCell::new(Log::new(mm.borrow().get(DEBUG_LOG_IDX_ID), mm.borrow().get(DEBUG_LOG_MEM_ID)))
     });
 }
