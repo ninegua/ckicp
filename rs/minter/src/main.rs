@@ -539,7 +539,10 @@ pub async fn sync_event_logs() -> Result<(), ReturnError> {
 pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
 
-    // FIXME: should differentiate between event_seen and event_processed
+    // FIXME: should differentiate between event_seen and event_processed.
+    // This is because the actual transfer could fail, which would leave us
+    // with event_seen but fund not released. In such case, we should have
+    // an option to re-try the transfer.
     let event_seen = EVENT_ID_MAP.with(|event_id_map| {
         let mut event_id_map = event_id_map.borrow_mut();
         if event_id_map.contains_key(&event_id.into()) {
