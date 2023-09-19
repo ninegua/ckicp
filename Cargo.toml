@@ -18,13 +18,7 @@ ic-cdk-macros = "0.8.0"
 ic-cdk-timers = "0.5.0"
 ic-stable-structures = "0.5.6"
 icrc-ledger-types = "0.1.0"
-k256 = { version = "0.13.1", default_features = false }
-p256 = { version = "0.13.2", default_features = false, features = [
-  "arithmetic",
-  "ecdsa",
-  "pem",
-  "pkcs8",
-] }
+k256 = { version = "0.13.1", default_features = false, features = ["ecdsa-core"] }
 lazy_static = "1.4.0" 
 num-traits = "0.2.15"
 rustic = "0.1.6"

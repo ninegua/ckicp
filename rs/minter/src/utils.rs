@@ -18,7 +18,7 @@ pub fn principal_from_subaccount(subaccount: &Subaccount) -> Principal {
 pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     let mut hasher = Sha256::new();
     hasher.update(caller);
-    hasher.update(&nonce.to_le_bytes());
+    hasher.update(nonce.to_le_bytes());
     let hashed = hasher.finalize();
     // Return XOR of 128 bit chunks of the hashed principal
     let mut id = 0;
@@ -27,5 +27,3 @@ pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     }
     id
 }
-
-

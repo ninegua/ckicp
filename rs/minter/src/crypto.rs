@@ -36,13 +36,31 @@ impl BoundedStorable for EcdsaSignature {
 }
 
 impl EcdsaSignature {
-    pub fn from_sec1(bytes: &[u8]) -> Self {
-        let mut bytes = bytes.to_vec();
-        let s = bytes.split_off(32);
+    // pub fn from_sec1(bytes: &[u8]) -> Self {
+    //     let mut bytes = bytes.to_vec();
+    //     let s = bytes.split_off(32);
+    //     Self {
+    //         r: bytes.try_into().unwrap(),
+    //         s: s.try_into().unwrap(),
+    //         v: 0,
+    //     }
+    // }
+
+    pub fn from_rsv(r: &[u8], s: &[u8], v: u8) -> Self {
         Self {
-            r: bytes.try_into().unwrap(),
+            r: r.try_into().unwrap(),
             s: s.try_into().unwrap(),
-            v: 0,
+            v,
+        }
+    }
+
+    pub fn from_signature_v(signature: &[u8], v: u8) -> Self {
+        let mut signature = signature.to_vec();
+        let s = signature.split_off(32);
+        Self {
+            r: signature.try_into().unwrap(),
+            s: s.try_into().unwrap(),
+            v,
         }
     }
 }

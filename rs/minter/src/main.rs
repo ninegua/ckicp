@@ -3,7 +3,7 @@
 
 use ckicp_minter::crypto::EcdsaSignature;
 use ckicp_minter::memory::*;
-use ckicp_minter::tecdsa::{ManagementCanister, SignWithECDSAReply};
+use ckicp_minter::tecdsa::{ECDSAPublicKeyReply, ManagementCanister, SignWithECDSAReply};
 use ckicp_minter::utils::*;
 
 use candid::{candid_method, CandidType, Decode, Encode, Nat, Principal};
@@ -34,12 +34,12 @@ use std::convert::From;
 use std::time::Duration;
 
 use k256::{
-    ecdsa::VerifyingKey,
+    ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::{
         generic_array::{typenum::Unsigned, GenericArray},
         Curve,
     },
-    PublicKey, Secp256k1,
+    EncodedPoint, PublicKey, Secp256k1,
 };
 
 use icrc_ledger_types::icrc1::account::{Account, Subaccount};
@@ -186,15 +186,31 @@ pub async fn mint_ckicp(
     let mut hasher = Sha256::new();
     hasher.update(payload_to_sign);
     let hashed = hasher.finalize();
+    let digest = hashed.to_vec();
 
     let signature: Vec<u8> = {
-        let (res,): (SignWithECDSAReply,) = ManagementCanister::sign(hashed.to_vec())
+        let (res,): (SignWithECDSAReply,) = ManagementCanister::sign(digest)
             .await
             .map_err(|_| ReturnError::TecdsaSignatureError)?;
         res.signature
     };
 
-    // TODO: Calculate `v`
+    // Calculate `v`
+    let sec1_public_key = CKICP_STATE.with(|ckicp_state| {
+        let ckicp_state = ckicp_state.borrow();
+        let ckicp_state = ckicp_state.get().0.clone().unwrap();
+        ckicp_state.tecdsa_pubkey
+    });
+    let public_key = VerifyingKey::from_sec1_bytes(&sec1_public_key).unwrap();
+
+    let recid = RecoveryId::trial_recovery_from_prehash(
+        &public_key,
+        &hashed,
+        &Signature::from_slice(signature.as_slice()).unwrap(),
+    )
+    .unwrap();
+
+    let v = recid.is_y_odd() as u8 + 27;
 
     // TODO: Add signature to map for future queries
     // SIGNATURE_MAP.with(|sm| {
@@ -212,7 +228,7 @@ pub async fn mint_ckicp(
     update_status(msg_id, amount, expiry, MintState::Signed);
 
     // Return tECDSA signature
-    unimplemented!();
+    Ok(EcdsaSignature::from_signature_v(&signature, v))
 }
 
 /// The event_id needs to uniquely identify each burn event on Ethereum.
@@ -276,24 +292,39 @@ pub fn set_ckicp_config(config: CkicpConfig) -> Result<(), ReturnError> {
             let mut ckicp_config = ckicp_config.borrow_mut();
             ckicp_config.set(Cbor(Some(config)))
         })
-        .map_err(|_| ReturnError::MemoryError)?;
-    Ok(())
+        .map(|_| ())
+        .map_err(|_| ReturnError::MemoryError)
 }
 
 #[update]
 #[modifiers("only_owner")]
-pub async fn update_ckicp_state() -> Result<(), ReturnError> {
-    let state: CkicpState = get_ckicp_state();
+pub async fn update_ckicp_pubkey() -> Result<(), ReturnError> {
+    let mut state: CkicpState = get_ckicp_state();
 
-    // TODO: Update tecdsa signer key and calculate signer ETH address
+    // Update tecdsa signer key and calculate signer ETH address
+    let (res,): (ECDSAPublicKeyReply,) = ManagementCanister::ecdsa_public_key(canister_id())
+        .await
+        .map_err(|_| ReturnError::TecdsaSignatureError)?;
+    state.tecdsa_pubkey = res.public_key.clone();
+
+    let uncompressed_pubkey = VerifyingKey::from_sec1_bytes(&res.public_key)
+        .unwrap()
+        .to_encoded_point(false);
+    let ethereum_pubkey = &uncompressed_pubkey.as_bytes()[1..]; // trim off the first 0x04 byte
+    let mut hasher = Sha256::new();
+    hasher.update(ethereum_pubkey);
+    let hashed = hasher.finalize();
+    let address_bytes = &hashed[12..];
+
+    state.tecdsa_signer_address = address_bytes.try_into().unwrap();
 
     CKICP_STATE
         .with(|ckicp_state| {
             let mut ckicp_state = ckicp_state.borrow_mut();
             ckicp_state.set(Cbor(Some(state)))
         })
-        .map_err(|_| ReturnError::MemoryError)?;
-    Ok(())
+        .map(|_| ())
+        .map_err(|_| ReturnError::MemoryError)
 }
 
 ic_cdk::export_candid!();

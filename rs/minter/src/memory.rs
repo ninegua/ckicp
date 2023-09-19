@@ -24,7 +24,7 @@ pub struct CkicpConfig {
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct CkicpState {
-    pub tecdsa_pubkey: String,
+    pub tecdsa_pubkey: Vec<u8>,
     pub tecdsa_signer_address: [u8; 20],
     pub total_icp_locked: Amount,
 }
