@@ -11,6 +11,7 @@ candid = { version = "0.9.5", features = ["parser"] }
 # candid_derive = "0.6.3"
 ciborium = "0.2.0"
 ethnum = "1.4.0"
+getrandom = "0.2.10"
 hex = "0.4.3"
 ic-canister-log = "0.2.0"
 ic-cdk = "0.11.0"
