@@ -1,6 +1,7 @@
 use candid::Principal;
 use icrc_ledger_types::icrc1::account::{Account, Subaccount};
 use sha2::{Digest, Sha256};
+use std::fmt::Write;
 
 pub fn subaccount_from_principal(principal: &Principal) -> Subaccount {
     let mut subaccount = [0; 32];
@@ -18,7 +19,7 @@ pub fn principal_from_subaccount(subaccount: &Subaccount) -> Principal {
 pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     let mut hasher = Sha256::new();
     hasher.update(caller);
-    hasher.update(&nonce.to_le_bytes());
+    hasher.update(nonce.to_le_bytes());
     let hashed = hasher.finalize();
     // Return XOR of 128 bit chunks of the hashed principal
     let mut id = 0;
@@ -28,4 +29,30 @@ pub fn calc_msgid(caller: &Subaccount, nonce: u32) -> u128 {
     id
 }
 
+pub fn decode_hex(s: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect()
+}
 
+pub fn encode_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
+}
+
+// In the following, we register a custom getrandom implementation because
+// otherwise getrandom (which is a dependency of k256) fails to compile.
+// This is necessary because getrandom by default fails to compile for the
+// wasm32-unknown-unknown target (which is required for deploying a canister).
+// Our custom implementation always fails, which is sufficient here because
+// we only use the k256 crate for verifying secp256k1 signatures, and such
+// signature verification does not require any randomness.
+
+getrandom::register_custom_getrandom!(always_fail);
+pub fn always_fail(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    Err(getrandom::Error::UNSUPPORTED)
+}

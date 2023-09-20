@@ -2,7 +2,7 @@ use candid::{CandidType, Decode, Encode, Principal};
 use ic_stable_structures::memory_manager::MemoryId;
 use ic_stable_structures::DefaultMemoryImpl;
 use ic_stable_structures::{BoundedStorable, StableBTreeMap, StableCell, StableVec, Storable};
-use rustic::default_memory_map::MEMORY_MANAGER;
+use rustic::memory_map::MEMORY_MANAGER;
 use rustic::types::{Cbor, RM, VM};
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -24,7 +24,7 @@ pub struct CkicpConfig {
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct CkicpState {
-    pub tecdsa_pubkey: String,
+    pub tecdsa_pubkey: Vec<u8>,
     pub tecdsa_signer_address: [u8; 20],
     pub total_icp_locked: Amount,
 }
@@ -94,7 +94,7 @@ impl BoundedStorable for MintStatus {
 const CKICP_CONFIG_SIZE: u64 = 4;
 const CKICP_STATE_SIZE: u64 = 1;
 
-const CKICP_CONFIG_PAGE_START: u64 = rustic::default_memory_map::USER_PAGE_START;
+const CKICP_CONFIG_PAGE_START: u64 = rustic::memory_map::USER_PAGE_START;
 const CKICP_CONFIG_PAGE_END: u64 = CKICP_CONFIG_PAGE_START + CKICP_CONFIG_SIZE;
 const CKICP_STATE_PAGE_START: u64 = CKICP_CONFIG_PAGE_END;
 const CKICP_STATE_PAGE_END: u64 = CKICP_STATE_PAGE_START + CKICP_STATE_SIZE;
