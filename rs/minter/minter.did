@@ -1,9 +1,17 @@
+type CanisterLifecycle = record {
+  version_major : nat16;
+  last_upgraded : nat64;
+  version_minor : nat16;
+  stable_memory_version : nat16;
+  version_patch : nat16;
+  ic_canister_version : nat64;
+};
 type CkicpConfig = record {
   expiry_seconds : nat64;
   max_response_bytes : nat64;
   ecdsa_key_name : text;
   ckicp_getlogs_topics : vec text;
-  target_chain_ids : vec nat8;
+  target_chain_ids : vec nat64;
   ckicp_eth_erc20_address : text;
   eth_rpc_service_url : text;
   cycle_cost_of_eth_blocknumber : nat;
@@ -55,6 +63,19 @@ type ReturnError = variant {
   Expired;
 };
 service : () -> {
+  accept_ownership : () -> ();
+  get_config_user_page_end : () -> (nat64) query;
+  get_version : () -> (CanisterLifecycle) query;
+  get_version_text : () -> (text) query;
+  grant_admin : (principal) -> ();
+  is_admin : (principal) -> (bool) query;
+  is_owner : (principal) -> (bool) query;
+  owner : () -> (opt principal) query;
+  pending_owner : () -> (opt principal) query;
+  renounce_admin : () -> ();
+  revoke_admin : (principal) -> ();
+  transfer_ownership : (opt principal) -> ();
+  transfer_ownership_immediate : (opt principal) -> ();
   get_ckicp_config : () -> (CkicpConfig) query;
   get_ckicp_state : () -> (CkicpState) query;
   get_nonce : () -> (nat32) query;
