@@ -16,10 +16,8 @@ type MsgId = u128;
 pub struct CkicpConfig {
     pub eth_rpc_service_url: String,
     pub eth_rpc_canister_id: Principal,
-    pub ckicp_canister_id: Principal,
     pub ledger_canister_id: Principal,
     pub ckicp_eth_erc20_address: String,
-    pub ckicp_eth_address: [u8; 20], // Deploy using CREATE2 to get the same address
     pub ckicp_fee: Amount,
     pub ckicp_getlogs_topics: Vec<String>,
     pub expiry_seconds: u64,

@@ -220,7 +220,7 @@ pub async fn mint_ckicp(
             subaccount: Some(from_subaccount),
         },
         to: icrc1::account::Account {
-            owner: config.ckicp_canister_id,
+            owner: canister_id(),
             subaccount: None,
         },
         amount: Nat::from(amount),
@@ -248,13 +248,14 @@ pub async fn mint_ckicp(
     // Generate tECDSA signature
     // payload is (amount, to, msgId, expiry, chainId, ckicp_eth_address), 32 bytes each
     let amount_to_transfer = amount - config.ckicp_fee;
+    let ckicp_eth_address = hex_decode_0x(&config.ckicp_eth_erc20_address).unwrap();
     let mut payload_to_sign: [u8; 192] = [0; 192];
     payload_to_sign[0..32].copy_from_slice(&amount_to_transfer.to_be_bytes());
     payload_to_sign[32..64].copy_from_slice(&target_eth_wallet);
     payload_to_sign[64..96].copy_from_slice(&msg_id.to_be_bytes());
     payload_to_sign[96..128].copy_from_slice(&expiry.to_be_bytes());
     payload_to_sign[128..160].copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
-    payload_to_sign[160..192].copy_from_slice(&config.ckicp_eth_address);
+    payload_to_sign[160..192].copy_from_slice(&ckicp_eth_address);
 
     use sha3::Digest;
     let mut hasher = Keccak256::new();
