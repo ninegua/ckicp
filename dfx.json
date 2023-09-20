@@ -3,7 +3,8 @@
     "minter": {
       "candid": "rs/minter/minter.did",
       "type":"rust",
-      "package": "ckicp-minter"
+      "package": "ckicp-minter",
+      "optimize": "size"
     },
     "ledger": {
       "type": "custom",
