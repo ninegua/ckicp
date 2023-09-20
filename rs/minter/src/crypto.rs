@@ -1,12 +1,5 @@
 use ic_stable_structures::{BoundedStorable, Storable};
-use k256::{
-    ecdsa::{RecoveryId, Signature, VerifyingKey},
-    elliptic_curve::{
-        generic_array::{typenum::Unsigned, GenericArray},
-        Curve,
-    },
-    EncodedPoint, PublicKey, Secp256k1,
-};
+use k256::ecdsa::VerifyingKey;
 use sha3::Keccak256;
 use std::borrow::Cow;
 
