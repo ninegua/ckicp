@@ -29,6 +29,7 @@ pub struct CkicpConfig {
     pub cycle_cost_of_eth_getlogs: u128,
     pub cycle_cost_of_eth_blocknumber: u128,
     pub debug_log_level: u8,
+    pub ecdsa_key_name: String,
 }
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]

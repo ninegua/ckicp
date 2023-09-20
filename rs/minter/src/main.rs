@@ -66,7 +66,7 @@ pub enum ReturnError {
     Unauthorized,
     Expired,
     InterCanisterCallError(String),
-    TecdsaSignatureError,
+    TecdsaSignatureError(String),
     CryptoError,
     EventSeen,
     MemoryError,
@@ -264,9 +264,10 @@ pub async fn mint_ckicp(
     let digest = hashed.to_vec();
 
     let signature: Vec<u8> = {
-        let (res,): (SignWithECDSAReply,) = ManagementCanister::sign(digest)
-            .await
-            .map_err(|_| ReturnError::TecdsaSignatureError)?;
+        let (res,): (SignWithECDSAReply,) =
+            ManagementCanister::sign(&config.ecdsa_key_name, digest)
+                .await
+                .map_err(|err| ReturnError::TecdsaSignatureError(err.1))?;
         res.signature
     };
 
@@ -661,9 +662,10 @@ pub async fn update_ckicp_state() -> Result<(), ReturnError> {
     state.last_block = config.last_synced_block_number;
 
     // Update tecdsa signer key and calculate signer ETH address
-    let (res,): (ECDSAPublicKeyReply,) = ManagementCanister::ecdsa_public_key(canister_id())
-        .await
-        .map_err(|_| ReturnError::TecdsaSignatureError)?;
+    let (res,): (ECDSAPublicKeyReply,) =
+        ManagementCanister::ecdsa_public_key(&config.ecdsa_key_name, canister_id())
+            .await
+            .map_err(|err| ReturnError::TecdsaSignatureError(err.1))?;
     state.tecdsa_pubkey = res.public_key.clone();
 
     state.tecdsa_signer_address =

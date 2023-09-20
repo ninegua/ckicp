@@ -1,6 +1,7 @@
 type CkicpConfig = record {
   expiry_seconds : nat64;
   max_response_bytes : nat64;
+  ecdsa_key_name : text;
   ckicp_getlogs_topics : vec text;
   target_chain_ids : vec nat8;
   ckicp_eth_erc20_address : text;
@@ -50,7 +51,7 @@ type ReturnError = variant {
   EventSeen;
   OutOfMemory;
   EthRpcError : EthRpcError;
-  TecdsaSignatureError;
+  TecdsaSignatureError : text;
   InputError;
   Expired;
 };

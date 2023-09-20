@@ -1,11 +1,9 @@
-
-use lazy_static::lazy_static;
 use candid::CandidType;
 use candid::Principal;
 use ic_cdk::api::call::{call_with_payment, CallResult};
 use ic_cdk::call;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-
 
 #[derive(CandidType, Serialize, Debug)]
 pub struct PublicKeyReply {
@@ -62,15 +60,17 @@ lazy_static! {
 }
 
 impl ManagementCanister {
-    
     pub async fn raw_rand() -> CallResult<(Vec<u8>,)> {
         call(*MGMT_ID, "raw_rand", ()).await
     }
 
-    pub async fn ecdsa_public_key(canister_id: Principal) -> CallResult<(ECDSAPublicKeyReply,)> {
+    pub async fn ecdsa_public_key(
+        key_name: &str,
+        canister_id: Principal,
+    ) -> CallResult<(ECDSAPublicKeyReply,)> {
         let key_id = EcdsaKeyId {
             curve: EcdsaCurve::Secp256k1,
-            name: "key_1".to_string(),
+            name: key_name.to_string(),
             // name: "dfx_test_key".to_string(),
         };
 
@@ -83,11 +83,10 @@ impl ManagementCanister {
         call(*MGMT_ID, "ecdsa_public_key", (request,)).await
     }
 
-    pub async fn sign(message: Vec<u8>) -> CallResult<(SignWithECDSAReply,)> {
+    pub async fn sign(key_name: &str, message: Vec<u8>) -> CallResult<(SignWithECDSAReply,)> {
         let key_id = EcdsaKeyId {
             curve: EcdsaCurve::Secp256k1,
-            name: "key_1".to_string(),
-            // name: "dfx_test_key".to_string(),
+            name: key_name.to_string(),
         };
 
         let request = SignWithECDSA {
