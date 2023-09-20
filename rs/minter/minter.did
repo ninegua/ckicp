@@ -63,6 +63,6 @@ service : () -> {
   process_block : (text) -> (Result_1);
   set_ckicp_config : (CkicpConfig) -> (Result_1);
   sync_event_logs : () -> (Result_1);
-  update_ckicp_pubkey : () -> (Result_1);
+  update_ckicp_state : () -> (Result_1);
   view_debug_log : (LogView) -> (vec text) query;
 }

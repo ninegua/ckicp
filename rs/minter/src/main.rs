@@ -652,9 +652,10 @@ pub fn set_ckicp_config(config: CkicpConfig) -> Result<(), ReturnError> {
         .map_err(|_| ReturnError::MemoryError)
 }
 
+// Update pub key and last_block stored in state.
 #[update]
 #[modifiers("only_owner")]
-pub async fn update_ckicp_pubkey() -> Result<(), ReturnError> {
+pub async fn update_ckicp_state() -> Result<(), ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
     let mut state: CkicpState = get_ckicp_state();
     state.last_block = config.last_synced_block_number;
