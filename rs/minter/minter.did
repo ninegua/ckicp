@@ -20,7 +20,7 @@ type CkicpState = record {
   tecdsa_signer_address : vec nat8;
   last_block : nat64;
   total_icp_locked : nat64;
-  tecdsa_pubkey : text;
+  tecdsa_pubkey : vec nat8;
 };
 type EcdsaSignature = record { r : vec nat8; s : vec nat8; v : nat8 };
 type EthRpcError = variant {
@@ -40,8 +40,10 @@ type ReturnError = variant {
   GenericError;
   JsonParseError : text;
   MaxResponseBytesExceeded;
+  MemoryError;
   TransferError : text;
   InterCanisterCallError : text;
+  CryptoError;
   EventLogError : EventError;
   MaxResponseBytesNotEnough;
   Unauthorized;
@@ -59,8 +61,8 @@ service : () -> {
   get_signature : (nat) -> (opt EcdsaSignature) query;
   mint_ckicp : (vec nat8, nat64, vec nat8) -> (Result);
   process_block : (text) -> (Result_1);
-  set_ckicp_config : (CkicpConfig) -> ();
+  set_ckicp_config : (CkicpConfig) -> (Result_1);
   sync_event_logs : () -> (Result_1);
-  update_ckicp_state : () -> ();
+  update_ckicp_pubkey : () -> (Result_1);
   view_debug_log : (LogView) -> (vec text) query;
 }

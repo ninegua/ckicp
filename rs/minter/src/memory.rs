@@ -33,7 +33,7 @@ pub struct CkicpConfig {
 
 #[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
 pub struct CkicpState {
-    pub tecdsa_pubkey: String,
+    pub tecdsa_pubkey: Vec<u8>,
     pub tecdsa_signer_address: [u8; 20],
     pub total_icp_locked: Amount,
     pub last_block: u64,
@@ -43,7 +43,7 @@ pub struct CkicpState {
 impl Default for CkicpState {
     fn default() -> Self {
         Self {
-            tecdsa_pubkey: "".to_string(),
+            tecdsa_pubkey: Vec::new(),
             tecdsa_signer_address: [0; 20],
             total_icp_locked: 0,
             last_block: 0,

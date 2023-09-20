@@ -1,12 +1,12 @@
 #![allow(clippy::unwrap_used)]
 #![allow(unused_imports)]
 
-use ckicp_minter::crypto::EcdsaSignature;
+use ckicp_minter::crypto::*;
 use ckicp_minter::memory::*;
-use ckicp_minter::tecdsa::{ManagementCanister, SignWithECDSAReply};
+use ckicp_minter::tecdsa::{ECDSAPublicKeyReply, ManagementCanister, SignWithECDSAReply};
 use ckicp_minter::utils::*;
 
-use candid::{candid_method, CandidType, Decode, Encode, Nat, Principal};
+use candid::{CandidType, Decode, Encode, Nat, Principal};
 use ic_canister_log::{declare_log_buffer, export};
 use ic_cdk::api::call::CallResult;
 use ic_cdk::api::management_canister::ecdsa::EcdsaPublicKeyResponse;
@@ -17,6 +17,7 @@ use ic_stable_structures::{
 
 use rustic::access_control::*;
 use rustic::inter_canister::*;
+use rustic::memory_map::*;
 use rustic::reentrancy_guard::*;
 use rustic::types::*;
 use rustic::utils::*;
@@ -24,7 +25,7 @@ use rustic_macros::modifiers;
 
 use serde_bytes::ByteBuf;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
+use sha3::Keccak256;
 use zeroize::ZeroizeOnDrop;
 
 use std::borrow::Cow;
@@ -33,12 +34,12 @@ use std::convert::From;
 use std::time::Duration;
 
 use k256::{
-    ecdsa::VerifyingKey,
+    ecdsa::{RecoveryId, Signature, VerifyingKey},
     elliptic_curve::{
         generic_array::{typenum::Unsigned, GenericArray},
         Curve,
     },
-    PublicKey, Secp256k1,
+    EncodedPoint, PublicKey, Secp256k1,
 };
 
 use icrc_ledger_types::icrc1;
@@ -66,7 +67,9 @@ pub enum ReturnError {
     Expired,
     InterCanisterCallError(String),
     TecdsaSignatureError,
+    CryptoError,
     EventSeen,
+    MemoryError,
     TransferError(String),
     EthRpcError(EthRpcError),
     JsonParseError(String),
@@ -77,7 +80,6 @@ pub enum ReturnError {
 }
 
 #[init]
-#[candid_method(init)]
 pub fn init() {
     rustic::rustic_init();
 }
@@ -90,7 +92,6 @@ pub fn post_upgrade() {
 }
 
 #[query]
-#[candid_method(query)]
 pub fn get_ckicp_config() -> CkicpConfig {
     CKICP_CONFIG.with(|ckicp_config| {
         let ckicp_config = ckicp_config.borrow();
@@ -99,7 +100,6 @@ pub fn get_ckicp_config() -> CkicpConfig {
 }
 
 #[query]
-#[candid_method(query)]
 pub fn get_ckicp_state() -> CkicpState {
     CKICP_STATE.with(|ckicp_state| {
         let ckicp_state = ckicp_state.borrow();
@@ -108,7 +108,6 @@ pub fn get_ckicp_state() -> CkicpState {
 }
 
 #[query]
-#[candid_method(query)]
 pub fn get_nonce() -> u32 {
     let caller = ic_cdk::caller();
     let caller_subaccount = subaccount_from_principal(&caller);
@@ -139,7 +138,6 @@ pub struct LogView {
 /// If 'from' is missing, 0 is used.
 /// If 'to' is missing, current length of all logs is used.
 #[query]
-#[candid_method(query)]
 #[modifiers("only_owner")]
 pub async fn view_debug_log(view: LogView) -> Vec<String> {
     let debug_log_len = DEBUG_LOG.with(|log| log.borrow().len());
@@ -181,7 +179,6 @@ pub fn debug_log(level: LogLevel, line: String) -> Result<(), ReturnError> {
 /// and does not need to be returned.
 /// ICP is transferred using ICRC-2 approved transfer
 #[update]
-#[candid_method(update)]
 pub async fn mint_ckicp(
     from_subaccount: icrc1::account::Subaccount,
     amount: Amount,
@@ -260,36 +257,46 @@ pub async fn mint_ckicp(
     payload_to_sign[128..160].copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
     payload_to_sign[160..192].copy_from_slice(&config.ckicp_eth_address);
 
-    let mut hasher = Sha256::new();
+    use sha3::Digest;
+    let mut hasher = Keccak256::new();
     hasher.update(payload_to_sign);
     let hashed = hasher.finalize();
+    let digest = hashed.to_vec();
 
-    let _signature: Vec<u8> = {
-        let (res,): (SignWithECDSAReply,) = ManagementCanister::sign(hashed.to_vec())
+    let signature: Vec<u8> = {
+        let (res,): (SignWithECDSAReply,) = ManagementCanister::sign(digest)
             .await
             .map_err(|_| ReturnError::TecdsaSignatureError)?;
         res.signature
     };
 
-    // TODO: Calculate `v`
+    // Calculate `v`
+    let sec1_public_key = CKICP_STATE.with(|ckicp_state| {
+        let ckicp_state = ckicp_state.borrow();
+        let ckicp_state = ckicp_state.get().0.clone().unwrap();
+        ckicp_state.tecdsa_pubkey
+    });
+    let public_key = VerifyingKey::from_sec1_bytes(&sec1_public_key).unwrap();
 
-    // TODO: Add signature to map for future queries
-    // SIGNATURE_MAP.with(|sm| {
-    //     let mut sm = sm.borrow_mut();
-    //     sm.insert(
-    //         msg_id,
-    //         EcdsaSignature {
-    //             r: signature[0..32],
-    //             s: signature[32..64],
-    //             v: signature[64],
-    //         },
-    //     );
-    // });
+    let recid = RecoveryId::trial_recovery_from_prehash(
+        &public_key,
+        &hashed,
+        &Signature::from_slice(signature.as_slice()).unwrap(),
+    )
+    .unwrap();
+
+    let v = recid.is_y_odd() as u8 + 27;
+
+    // Add signature to map for future queries
+    SIGNATURE_MAP.with(|sm| {
+        let mut sm = sm.borrow_mut();
+        sm.insert(msg_id, EcdsaSignature::from_signature_v(&signature, v));
+    });
 
     update_status(msg_id, amount, expiry, MintState::Signed);
 
     // Return tECDSA signature
-    unimplemented!();
+    Ok(EcdsaSignature::from_signature_v(&signature, v))
 }
 
 async fn eth_rpc_call(
@@ -343,7 +350,6 @@ async fn eth_rpc_call(
 ///
 /// This is can only be called by owner and only meant for debugging purposes.
 #[update]
-#[candid_method(update)]
 #[modifiers("only_owner")]
 pub async fn process_block(block_hash: String) -> Result<(), ReturnError> {
     // get log events from block with the given block_hash
@@ -408,7 +414,6 @@ async fn process_logs(logs: Value) -> Result<(), ReturnError> {
 /// Sync event logs of the ckICP ERC-20 contract via RPC.
 /// This is meant to be called from a timer.
 #[update]
-#[candid_method(update)]
 #[modifiers("only_owner")]
 pub async fn sync_event_logs() -> Result<(), ReturnError> {
     let _guard = ReentrancyGuard::new();
@@ -628,7 +633,6 @@ pub async fn release_icp(event: BurnEvent, event_id: EventId) -> Result<(), Retu
 }
 
 #[query]
-#[candid_method(query)]
 pub fn get_signature(msg_id: MsgId) -> Option<EcdsaSignature> {
     SIGNATURE_MAP.with(|sm| {
         let sm = sm.borrow();
@@ -637,35 +641,43 @@ pub fn get_signature(msg_id: MsgId) -> Option<EcdsaSignature> {
 }
 
 #[update]
-#[candid_method(update)]
 #[modifiers("only_owner")]
-pub fn set_ckicp_config(config: CkicpConfig) {
-    CKICP_CONFIG.with(|ckicp_config| {
-        let mut ckicp_config = ckicp_config.borrow_mut();
-        ckicp_config.set(Cbor(Some(config))).unwrap();
-    })
+pub fn set_ckicp_config(config: CkicpConfig) -> Result<(), ReturnError> {
+    CKICP_CONFIG
+        .with(|ckicp_config| {
+            let mut ckicp_config = ckicp_config.borrow_mut();
+            ckicp_config.set(Cbor(Some(config)))
+        })
+        .map(|_| ())
+        .map_err(|_| ReturnError::MemoryError)
 }
 
 #[update]
-#[candid_method(update)]
 #[modifiers("only_owner")]
-pub async fn update_ckicp_state() {
+pub async fn update_ckicp_pubkey() -> Result<(), ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
     let mut state: CkicpState = get_ckicp_state();
-    // TODO: Update tecdsa signer key and calculate signer ETH address
     state.last_block = config.last_synced_block_number;
 
-    CKICP_STATE.with(|ckicp_state| {
-        let mut ckicp_state = ckicp_state.borrow_mut();
-        ckicp_state.set(Cbor(Some(state))).unwrap();
-    })
+    // Update tecdsa signer key and calculate signer ETH address
+    let (res,): (ECDSAPublicKeyReply,) = ManagementCanister::ecdsa_public_key(canister_id())
+        .await
+        .map_err(|_| ReturnError::TecdsaSignatureError)?;
+    state.tecdsa_pubkey = res.public_key.clone();
+
+    state.tecdsa_signer_address =
+        ethereum_address_from_public_key(&res.public_key).map_err(|_| ReturnError::CryptoError)?;
+
+    CKICP_STATE
+        .with(|ckicp_state| {
+            let mut ckicp_state = ckicp_state.borrow_mut();
+            ckicp_state.set(Cbor(Some(state)))
+        })
+        .map(|_| ())
+        .map_err(|_| ReturnError::MemoryError)
 }
 
-#[cfg(not(any(target_arch = "wasm32", test)))]
-fn main() {
-    candid::export_service!();
-    std::print!("{}", __export_service());
-}
+fn main() {}
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn main() {}
+ic_cdk::export_candid!();
