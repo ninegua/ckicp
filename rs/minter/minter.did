@@ -6,11 +6,11 @@ type CkicpConfig = record {
   ckicp_eth_erc20_address : text;
   eth_rpc_service_url : text;
   ckicp_canister_id : principal;
-  starting_block_number : nat64;
   cycle_cost_of_eth_blocknumber : nat;
   eth_rpc_canister_id : principal;
   ckicp_eth_address : vec nat8;
   ledger_canister_id : principal;
+  last_synced_block_number : nat64;
   ckicp_fee : nat64;
   cycle_cost_of_eth_getlogs : nat;
   debug_log_level : nat8;
@@ -32,7 +32,7 @@ type EthRpcError = variant {
   ProviderNotFound;
   NoPermission;
 };
-type LogError = record { code : opt nat64; message : text };
+type EventError = record { code : opt nat64; message : text };
 type LogView = record { to : opt nat64; from : opt nat64 };
 type Result = variant { Ok : EcdsaSignature; Err : ReturnError };
 type Result_1 = variant { Ok; Err : ReturnError };
@@ -42,7 +42,7 @@ type ReturnError = variant {
   MaxResponseBytesExceeded;
   TransferError : text;
   InterCanisterCallError : text;
-  EventLogError : LogError;
+  EventLogError : EventError;
   MaxResponseBytesNotEnough;
   Unauthorized;
   EventSeen;
