@@ -25,6 +25,7 @@ pub struct CkicpConfig {
     pub expiry_seconds: u64,
     pub target_chain_ids: Vec<u8>,
     pub max_response_bytes: u64,
+    pub sync_interval_secs: u64,
     pub last_synced_block_number: u64,
     pub cycle_cost_of_eth_getlogs: u128,
     pub cycle_cost_of_eth_blocknumber: u128,
@@ -175,4 +176,8 @@ thread_local! {
         MEMORY_MANAGER.with(|mm| {
             RefCell::new(Log::new(mm.borrow().get(DEBUG_LOG_IDX_ID), mm.borrow().get(DEBUG_LOG_MEM_ID)))
     });
+
+    // TimerId
+    pub static TIMER_ID: RefCell<Option<ic_cdk_timers::TimerId>> =
+        RefCell::new(None);
 }

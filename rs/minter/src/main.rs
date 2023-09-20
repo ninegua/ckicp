@@ -76,7 +76,7 @@ pub enum ReturnError {
     EventLogError(EventError),
     OutOfMemory,
     MaxResponseBytesExceeded,
-    MaxResponseBytesNotEnough,
+    MaxResponseBytesNotEnoughForBlock(u64),
 }
 
 #[init]
@@ -414,8 +414,6 @@ async fn process_logs(logs: Value) -> Result<(), ReturnError> {
 
 /// Sync event logs of the ckICP ERC-20 contract via RPC.
 /// This is meant to be called from a timer.
-#[update]
-#[modifiers("only_owner")]
 pub async fn sync_event_logs() -> Result<(), ReturnError> {
     let _guard = ReentrancyGuard::new();
     // get log events from block with the given block_hash
@@ -498,11 +496,7 @@ pub async fn sync_event_logs() -> Result<(), ReturnError> {
                 (block_number - state.last_block) / 2 + state.last_block
             };
             if last_block == state.last_block + 1 {
-                debug_log(
-                    ERROR,
-                    format!("Single block {} returns events exceeding max buffer size, requires manual intervention!", last_block),
-                )?;
-                return Err(ReturnError::MaxResponseBytesNotEnough);
+                return Err(ReturnError::MaxResponseBytesNotEnoughForBlock(last_block));
             }
 
             CKICP_STATE.with(|ckicp_state| {
@@ -641,6 +635,36 @@ pub fn get_signature(msg_id: MsgId) -> Option<EcdsaSignature> {
     })
 }
 
+// Call sync_event_logs(), and if it requires re-run, call it again.
+// Also log errors returned as warning.
+async fn periodic_task() {
+    loop {
+        match sync_event_logs().await {
+            Err(ReturnError::MaxResponseBytesExceeded) => (), // re-run
+            Err(ReturnError::MaxResponseBytesNotEnoughForBlock(block)) => {
+                // NOTE: This error requires a manual fix. We'll stop the timer first.
+                debug_log(
+                    ERROR,
+                    format!("Block {} returns events exceeding max buffer size. It requires manual intervention!", block),
+                ).unwrap();
+                TIMER_ID.with(|id| {
+                    if let Some(timer_id) = *id.borrow() {
+                        ic_cdk_timers::clear_timer(timer_id);
+                    }
+                });
+            }
+            Err(err) => {
+                debug_log(WARN, format!("sync_event_logs returns error {:?}", err)).unwrap();
+                break;
+            }
+            Ok(_) => break,
+        }
+    }
+}
+
+/// Set the configuration. Must be called at least once after deployment.
+/// It also starts syncing of event logs on a timer, based on the given 
+/// configuration parameter.
 #[update]
 #[modifiers("only_owner")]
 pub fn set_ckicp_config(config: CkicpConfig) -> Result<(), ReturnError> {
@@ -650,7 +674,19 @@ pub fn set_ckicp_config(config: CkicpConfig) -> Result<(), ReturnError> {
             ckicp_config.set(Cbor(Some(config)))
         })
         .map(|_| ())
-        .map_err(|_| ReturnError::MemoryError)
+        .map_err(|_| ReturnError::MemoryError)?;
+
+    TIMER_ID.with(|id| {
+        if let Some(timer_id) = *id.borrow() {
+            ic_cdk_timers::clear_timer(timer_id);
+        }
+        let timer_id = ic_cdk_timers::set_timer_interval(
+            Duration::from_secs(get_ckicp_config().sync_interval_secs),
+            || ic_cdk::spawn(periodic_task()),
+        );
+        *id.borrow_mut() = Some(timer_id);
+    });
+    Ok(())
 }
 
 // Update pub key and last_block stored in state.

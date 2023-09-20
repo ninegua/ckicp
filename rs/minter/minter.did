@@ -15,6 +15,7 @@ type CkicpConfig = record {
   ckicp_fee : nat64;
   cycle_cost_of_eth_getlogs : nat;
   debug_log_level : nat8;
+  sync_interval_secs : nat64;
 };
 type CkicpState = record {
   next_blocks : vec nat64;
@@ -46,7 +47,7 @@ type ReturnError = variant {
   InterCanisterCallError : text;
   CryptoError;
   EventLogError : EventError;
-  MaxResponseBytesNotEnough;
+  MaxResponseBytesNotEnoughForBlock : nat64;
   Unauthorized;
   EventSeen;
   OutOfMemory;
