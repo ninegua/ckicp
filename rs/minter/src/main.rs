@@ -26,7 +26,6 @@ use rustic_macros::modifiers;
 use serde_bytes::ByteBuf;
 use serde_json::{json, Value};
 use sha3::Keccak256;
-use zeroize::ZeroizeOnDrop;
 
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -663,7 +662,7 @@ async fn periodic_task() {
 }
 
 /// Set the configuration. Must be called at least once after deployment.
-/// It also starts syncing of event logs on a timer, based on the given 
+/// It also starts syncing of event logs on a timer, based on the given
 /// configuration parameter.
 #[update]
 #[modifiers("only_owner")]
