@@ -21,7 +21,7 @@ pub struct CkicpConfig {
     pub ckicp_fee: Amount,
     pub ckicp_getlogs_topics: Vec<String>,
     pub expiry_seconds: u64,
-    pub target_chain_ids: Vec<u8>,
+    pub target_chain_ids: Vec<u64>,
     pub max_response_bytes: u64,
     pub sync_interval_secs: u64,
     pub last_synced_block_number: u64,
@@ -110,7 +110,7 @@ impl Storable for MintStatus {
 }
 
 impl BoundedStorable for MintStatus {
-    const MAX_SIZE: u32 = 60;
+    const MAX_SIZE: u32 = 90;
     const IS_FIXED_SIZE: bool = false;
 }
 
