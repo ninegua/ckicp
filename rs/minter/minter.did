@@ -42,7 +42,7 @@ type EthRpcError = variant {
 };
 type EventError = record { code : opt nat64; message : text };
 type LogView = record { to : opt nat64; from : opt nat64 };
-type Result = variant { Ok : record { nat; nat64; text;text;text }; Err : ReturnError };
+type Result = variant { Ok : SelfMintArgs; Err : ReturnError };
 type Result_1 = variant { Ok; Err : ReturnError };
 type ReturnError = variant {
   GenericError;
@@ -61,6 +61,13 @@ type ReturnError = variant {
   TecdsaSignatureError : text;
   InputError;
   Expired;
+};
+type SelfMintArgs = record {
+  to : text;
+  msgid : nat;
+  signature : text;
+  expiry : nat64;
+  amount : nat64;
 };
 service : () -> {
   accept_ownership : () -> ();

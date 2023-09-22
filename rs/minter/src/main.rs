@@ -173,17 +173,25 @@ pub fn debug_log(level: LogLevel, line: String) -> Result<(), ReturnError> {
     }
 }
 
+#[derive(Clone, CandidType, serde::Deserialize)]
+pub struct SelfMintArgs {
+    amount: u64,
+    to: String,
+    msgid: u128,
+    expiry: u64,
+    signature: String,
+}
+
 /// Nonce starts at 1 and is incremented for each call to mint_ckicp
 /// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce))
 /// and does not need to be returned.
 /// ICP is transferred using ICRC-2 approved transfer
-/// Returns (amount, msgid, expiry, signature)
 #[update]
 pub async fn mint_ckicp(
     from_subaccount: icrc1::account::Subaccount,
     amount: Amount,
     target_eth_wallet: String,
-) -> Result<(u64, u128, u64, String), ReturnError> {
+) -> Result<SelfMintArgs, ReturnError> {
     let _guard = ReentrancyGuard::new();
     let caller = canister_caller();
     let caller_subaccount = subaccount_from_principal(&caller);
@@ -300,12 +308,13 @@ pub async fn mint_ckicp(
     update_status(msg_id, amount, expiry, MintState::Signed);
 
     // Return tECDSA signature
-    Ok((
-        amount_to_transfer,
-        msg_id,
+    Ok(SelfMintArgs {
+        amount: amount_to_transfer,
+        to: target_eth_wallet,
+        msgid: msg_id,
         expiry,
-        EcdsaSignature::from_signature_v(&signature, v).to_string(),
-    ))
+        signature: EcdsaSignature::from_signature_v(&signature, v).to_string(),
+    })
 }
 
 async fn eth_rpc_call(
