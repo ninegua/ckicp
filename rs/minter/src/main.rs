@@ -185,10 +185,12 @@ pub struct SelfMintArgs {
 /// Nonce starts at 1 and is incremented for each call to mint_ckicp
 /// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce))
 /// and does not need to be returned.
-/// ICP is transferred using ICRC-2 approved transfer
+/// ~~ICP is transferred using ICRC-2 approved transfer~~
+/// User needs to call `get_funding_subaccount` and transfer ICP to the returned subaccount of this canister first.
+/// The amount of ICP transferred must be at least `amount + ICP tx fee`.
 #[update]
 pub async fn mint_ckicp(
-    from_subaccount: icrc1::account::Subaccount,
+    _from_subaccount: icrc1::account::Subaccount,
     amount: Amount,
     target_eth_wallet: String,
 ) -> Result<SelfMintArgs, ReturnError> {
@@ -222,37 +224,71 @@ pub async fn mint_ckicp(
     }
 
     update_status(msg_id, amount, expiry, MintState::Init);
-    // ICRC-2 transfer -> not yet available on ICP ledger
-    // let tx_args = icrc2::transfer_from::TransferFromArgs {
-    //     spender_subaccount: None,
-    //     from: icrc1::account::Account {
-    //         owner: caller,
-    //         subaccount: Some(from_subaccount),
-    //     },
-    //     to: icrc1::account::Account {
-    //         owner: canister_id(),
-    //         subaccount: None,
-    //     },
-    //     amount: Nat::from(amount),
-    //     fee: None,
-    //     memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
-    //     created_at_time: Some(now),
-    // };
-    // let tx_result: Result<Nat, icrc2::transfer_from::TransferFromError> = canister_call(
-    //     config.ledger_canister_id,
-    //     "icrc2_transfer_from",
-    //     tx_args,
-    //     candid::encode_one,
-    //     |r| candid::decode_one(r),
-    // )
-    // .await
-    // .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
 
-    // match tx_result {
-    //     Ok(_) => {
-    //         update_status(msg_id, amount, expiry, MintState::FundReceived);
+    // ICRC-1 transfer
+    let tx_args = icrc1::transfer::TransferArg {
+        from_subaccount: Some(caller_subaccount),
+        to: icrc1::account::Account {
+            owner: canister_id(),
+            subaccount: None,
+        },
+        fee: None,
+        created_at_time: Some(ic_cdk::api::time()),
+        memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
+        amount: Nat::from(amount),
+    };
+    let tx_result: Result<Nat, icrc1::transfer::TransferError> = canister_call(
+        config.ledger_canister_id,
+        "icrc1_transfer",
+        tx_args,
+        candid::encode_one,
+        |r| candid::decode_one(r),
+    )
+    .await
+    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
+
+    match tx_result {
+        Ok(_) => {
+            update_status(msg_id, amount, expiry, MintState::FundReceived);
+        }
+        Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
+    }
+
+    // ICRC-2 transfer -> not yet available on ICP ledger
+    // When ICRC-2 becomes available, uncomment the following block (and handle icrc-1 tx failure differently)
+
+    // if icrc1_tx_failed {
+    //     let tx_args = icrc2::transfer_from::TransferFromArgs {
+    //         spender_subaccount: None,
+    //         from: icrc1::account::Account {
+    //             owner: caller,
+    //             subaccount: Some(from_subaccount),
+    //         },
+    //         to: icrc1::account::Account {
+    //             owner: canister_id(),
+    //             subaccount: None,
+    //         },
+    //         amount: Nat::from(amount),
+    //         fee: None,
+    //         memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
+    //         created_at_time: Some(now),
+    //     };
+    //     let tx_result: Result<Nat, icrc2::transfer_from::TransferFromError> = canister_call(
+    //         config.ledger_canister_id,
+    //         "icrc2_transfer_from",
+    //         tx_args,
+    //         candid::encode_one,
+    //         |r| candid::decode_one(r),
+    //     )
+    //     .await
+    //     .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
+
+    //     match tx_result {
+    //         Ok(_) => {
+    //             update_status(msg_id, amount, expiry, MintState::FundReceived);
+    //         }
+    //         Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
     //     }
-    //     Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
     // }
 
     // Generate tECDSA signature
@@ -734,13 +770,13 @@ pub async fn update_ckicp_state() -> Result<(), ReturnError> {
 }
 
 #[query]
-pub fn get_subaccount() -> icrc1::account::Subaccount {
+pub fn get_funding_subaccount() -> icrc1::account::Subaccount {
     let caller = ic_cdk::api::caller();
     subaccount_from_principal(&caller)
 }
 
 #[query]
-pub fn get_subaccount_hex() -> String {
+pub fn get_funding_subaccount_hex() -> String {
     let caller = ic_cdk::api::caller();
     hex_encode(&subaccount_from_principal(&caller))
 }
