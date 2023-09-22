@@ -1,3 +1,5 @@
+use crate::utils::*;
+
 use ic_stable_structures::{BoundedStorable, Storable};
 use k256::ecdsa::VerifyingKey;
 use sha3::Keccak256;
@@ -35,6 +37,16 @@ impl Storable for EcdsaSignature {
 impl BoundedStorable for EcdsaSignature {
     const MAX_SIZE: u32 = 65;
     const IS_FIXED_SIZE: bool = true;
+}
+
+impl std::string::ToString for EcdsaSignature {
+    fn to_string(&self) -> String {
+        let mut bytes = Vec::with_capacity(65);
+        bytes.extend_from_slice(&self.r);
+        bytes.extend_from_slice(&self.s);
+        bytes.push(self.v);
+        hex_encode(&bytes)
+    }
 }
 
 impl EcdsaSignature {

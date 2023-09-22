@@ -114,8 +114,8 @@ impl BoundedStorable for MintStatus {
     const IS_FIXED_SIZE: bool = false;
 }
 
-const CKICP_CONFIG_SIZE: u64 = 4;
-const CKICP_STATE_SIZE: u64 = 1;
+const CKICP_CONFIG_SIZE: u64 = 512;
+const CKICP_STATE_SIZE: u64 = 256;
 
 const CKICP_CONFIG_PAGE_START: u64 = rustic::memory_map::USER_PAGE_START;
 const CKICP_CONFIG_PAGE_END: u64 = CKICP_CONFIG_PAGE_START + CKICP_CONFIG_SIZE;

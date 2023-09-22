@@ -182,7 +182,7 @@ pub async fn mint_ckicp(
     from_subaccount: icrc1::account::Subaccount,
     amount: Amount,
     target_eth_wallet: [u8; 20],
-) -> Result<EcdsaSignature, ReturnError> {
+) -> Result<(u128, u64, String, String, String), ReturnError> {
     let _guard = ReentrancyGuard::new();
     let caller = canister_caller();
     let caller_subaccount = subaccount_from_principal(&caller);
@@ -212,56 +212,70 @@ pub async fn mint_ckicp(
     }
 
     update_status(msg_id, amount, expiry, MintState::Init);
-    // ICRC-2 transfer
-    let tx_args = icrc2::transfer_from::TransferFromArgs {
-        spender_subaccount: None,
-        from: icrc1::account::Account {
-            owner: caller,
-            subaccount: Some(from_subaccount),
-        },
-        to: icrc1::account::Account {
-            owner: canister_id(),
-            subaccount: None,
-        },
-        amount: Nat::from(amount),
-        fee: None,
-        memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
-        created_at_time: Some(now),
-    };
-    let tx_result: Result<Nat, icrc2::transfer_from::TransferFromError> = canister_call(
-        config.ledger_canister_id,
-        "icrc2_transfer_from",
-        tx_args,
-        candid::encode_one,
-        |r| candid::decode_one(r),
-    )
-    .await
-    .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
+    // ICRC-2 transfer -> not yet available on ICP ledger
+    // let tx_args = icrc2::transfer_from::TransferFromArgs {
+    //     spender_subaccount: None,
+    //     from: icrc1::account::Account {
+    //         owner: caller,
+    //         subaccount: Some(from_subaccount),
+    //     },
+    //     to: icrc1::account::Account {
+    //         owner: canister_id(),
+    //         subaccount: None,
+    //     },
+    //     amount: Nat::from(amount),
+    //     fee: None,
+    //     memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
+    //     created_at_time: Some(now),
+    // };
+    // let tx_result: Result<Nat, icrc2::transfer_from::TransferFromError> = canister_call(
+    //     config.ledger_canister_id,
+    //     "icrc2_transfer_from",
+    //     tx_args,
+    //     candid::encode_one,
+    //     |r| candid::decode_one(r),
+    // )
+    // .await
+    // .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
 
-    match tx_result {
-        Ok(_) => {
-            update_status(msg_id, amount, expiry, MintState::FundReceived);
-        }
-        Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
-    }
+    // match tx_result {
+    //     Ok(_) => {
+    //         update_status(msg_id, amount, expiry, MintState::FundReceived);
+    //     }
+    //     Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
+    // }
 
     // Generate tECDSA signature
     // payload is (amount, to, msgId, expiry, chainId, ckicp_eth_address), 32 bytes each
     let amount_to_transfer = amount - config.ckicp_fee;
     let ckicp_eth_address = hex_decode_0x(&config.ckicp_eth_erc20_address).unwrap();
-    let mut payload_to_sign: [u8; 192] = [0; 192];
-    payload_to_sign[24..32].copy_from_slice(&amount_to_transfer.to_be_bytes());
-    payload_to_sign[44..64].copy_from_slice(&target_eth_wallet);
-    payload_to_sign[80..96].copy_from_slice(&msg_id.to_be_bytes());
-    payload_to_sign[120..128].copy_from_slice(&expiry.to_be_bytes());
-    payload_to_sign[152..160].copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
-    payload_to_sign[172..192].copy_from_slice(&ckicp_eth_address);
+
+    //let eip191 = "\x19Ethereum Signed Message:\n".as_bytes();
+    const PREFIX_LEN: usize = 0;
+    let mut payload_to_sign: [u8; 192 + PREFIX_LEN] = [0; 192 + PREFIX_LEN];
+    //payload_to_sign[0..26].copy_from_slice(eip191);
+    //payload_to_sign[26] = 192;
+    payload_to_sign[PREFIX_LEN + 24..PREFIX_LEN + 32]
+        .copy_from_slice(&amount_to_transfer.to_be_bytes());
+    payload_to_sign[PREFIX_LEN + 44..PREFIX_LEN + 64].copy_from_slice(&target_eth_wallet);
+    payload_to_sign[PREFIX_LEN + 80..PREFIX_LEN + 96].copy_from_slice(&msg_id.to_be_bytes());
+    payload_to_sign[PREFIX_LEN + 120..PREFIX_LEN + 128].copy_from_slice(&expiry.to_be_bytes());
+    payload_to_sign[PREFIX_LEN + 152..PREFIX_LEN + 160]
+        .copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
+    payload_to_sign[PREFIX_LEN + 172..PREFIX_LEN + 192].copy_from_slice(&ckicp_eth_address);
+
+    // "debug2(bytes)" works
+    //let payload_to_sign: [u8; 32] = [0; 32];
 
     use sha3::Digest;
     let mut hasher = Keccak256::new();
     hasher.update(payload_to_sign);
     let hashed = hasher.finalize();
     let digest = hashed.to_vec();
+
+    // "debug(bytes)" works
+    // let hashed = [0; 32];
+    // let digest = [0; 32].to_vec();
 
     let signature: Vec<u8> = {
         let (res,): (SignWithECDSAReply,) =
@@ -297,7 +311,13 @@ pub async fn mint_ckicp(
     update_status(msg_id, amount, expiry, MintState::Signed);
 
     // Return tECDSA signature
-    Ok(EcdsaSignature::from_signature_v(&signature, v))
+    Ok((
+        msg_id,
+        expiry,
+        hex_encode(&payload_to_sign),
+        hex_encode(&hashed),
+        EcdsaSignature::from_signature_v(&signature, v).to_string(),
+    ))
 }
 
 async fn eth_rpc_call(
@@ -714,6 +734,24 @@ pub async fn update_ckicp_state() -> Result<(), ReturnError> {
         })
         .map(|_| ())
         .map_err(|_| ReturnError::MemoryError)
+}
+
+#[query]
+pub fn get_subaccount() -> icrc1::account::Subaccount {
+    let caller = ic_cdk::api::caller();
+    subaccount_from_principal(&caller)
+}
+
+#[query]
+pub fn get_subaccount_hex() -> String {
+    let caller = ic_cdk::api::caller();
+    hex_encode(&subaccount_from_principal(&caller))
+}
+
+#[query]
+pub fn get_tecdsa_signer_address_hex() -> String {
+    let state: CkicpState = get_ckicp_state();
+    hex_encode(&state.tecdsa_signer_address)
 }
 
 fn main() {}

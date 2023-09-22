@@ -36,6 +36,20 @@ pub fn hex_decode_0x_u64(s: &str) -> Option<u64> {
     Some(u64::from_be_bytes(bytes))
 }
 
+// Encode bytes as hex string without 0x prefix.
+pub fn hex_encode(data: &[u8]) -> String {
+    const HEX_CHARS: [char; 16] = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+    ];
+
+    let mut result = String::with_capacity(data.len() * 2);
+    for &byte in data {
+        result.push(HEX_CHARS[(byte >> 4) as usize]);
+        result.push(HEX_CHARS[(byte & 0x0F) as usize]);
+    }
+    result
+}
+
 // This function is copied from ic/rs/ethereum/cketh/minter/src/eth_logs/mod.rs
 fn parse_principal_from_slice(slice: &[u8]) -> Result<Principal, String> {
     const ANONYMOUS_PRINCIPAL_BYTES: [u8; 1] = [4];

@@ -42,7 +42,7 @@ type EthRpcError = variant {
 };
 type EventError = record { code : opt nat64; message : text };
 type LogView = record { to : opt nat64; from : opt nat64 };
-type Result = variant { Ok : EcdsaSignature; Err : ReturnError };
+type Result = variant { Ok : record { nat; nat64; text;text;text }; Err : ReturnError };
 type Result_1 = variant { Ok; Err : ReturnError };
 type ReturnError = variant {
   GenericError;
@@ -80,6 +80,9 @@ service : () -> {
   get_ckicp_state : () -> (CkicpState) query;
   get_nonce : () -> (nat32) query;
   get_signature : (nat) -> (opt EcdsaSignature) query;
+  get_subaccount : () -> (vec nat8) query;
+  get_subaccount_hex : () -> (text) query;
+  get_tecdsa_signer_address_hex : () -> (text) query;
   mint_ckicp : (vec nat8, nat64, vec nat8) -> (Result);
   process_block : (text) -> (Result_1);
   set_ckicp_config : (CkicpConfig) -> (Result_1);
