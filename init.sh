@@ -17,8 +17,8 @@ ICP_LEDGER_CANISTER_ID=$(dfx canister $OPTS id ledger)
 dfx canister $OPTS call minter set_ckicp_config "(record {
   expiry_seconds = 18000: nat64;
   max_response_bytes = 4000: nat64;
-  target_chain_ids = vec {1}: vec nat64;
-  ckicp_eth_erc20_address = \"0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8\";
+  target_chain_ids = vec {5}: vec nat64;
+  ckicp_eth_erc20_address = \"0x50DE675A89bB4eEBFFdA4AcC37490D0e45469Ec6\";
   eth_rpc_service_url = \"$ETH_RPC_URL\";
   eth_rpc_canister_id = principal \"$ETHRPC_CANISTER_ID\";
   ledger_canister_id = principal \"$ICP_LEDGER_CANISTER_ID\";
