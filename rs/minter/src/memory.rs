@@ -31,25 +31,13 @@ pub struct CkicpConfig {
     pub ecdsa_key_name: String,
 }
 
-#[derive(Clone, CandidType, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, CandidType, serde::Serialize, serde::Deserialize, Default)]
 pub struct CkicpState {
     pub tecdsa_pubkey: Vec<u8>,
     pub tecdsa_signer_address: [u8; 20],
     pub total_icp_locked: Amount,
     pub last_block: u64,
     pub next_blocks: std::collections::VecDeque<u64>,
-}
-
-impl Default for CkicpState {
-    fn default() -> Self {
-        Self {
-            tecdsa_pubkey: Vec::new(),
-            tecdsa_signer_address: [0; 20],
-            total_icp_locked: 0,
-            last_block: 0,
-            next_blocks: std::collections::VecDeque::new(),
-        }
-    }
 }
 
 #[derive(
@@ -114,8 +102,8 @@ impl BoundedStorable for MintStatus {
     const IS_FIXED_SIZE: bool = false;
 }
 
-const CKICP_CONFIG_SIZE: u64 = 4;
-const CKICP_STATE_SIZE: u64 = 1;
+const CKICP_CONFIG_SIZE: u64 = 512;
+const CKICP_STATE_SIZE: u64 = 256;
 
 const CKICP_CONFIG_PAGE_START: u64 = rustic::memory_map::USER_PAGE_START;
 const CKICP_CONFIG_PAGE_END: u64 = CKICP_CONFIG_PAGE_START + CKICP_CONFIG_SIZE;

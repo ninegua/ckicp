@@ -173,19 +173,31 @@ pub fn debug_log(level: LogLevel, line: String) -> Result<(), ReturnError> {
     }
 }
 
+#[derive(Clone, CandidType, serde::Deserialize)]
+pub struct SelfMintArgs {
+    amount: u64,
+    to: String,
+    msgid: u128,
+    expiry: u64,
+    signature: String,
+}
+
 /// Nonce starts at 1 and is incremented for each call to mint_ckicp
 /// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce))
 /// and does not need to be returned.
-/// ICP is transferred using ICRC-2 approved transfer
+/// ~~ICP is transferred using ICRC-2 approved transfer~~
+/// User needs to call `get_funding_subaccount` and transfer ICP to the returned subaccount of this canister first.
+/// The amount of ICP transferred must be at least `amount + ICP tx fee`.
 #[update]
 pub async fn mint_ckicp(
-    from_subaccount: icrc1::account::Subaccount,
+    _from_subaccount: icrc1::account::Subaccount,
     amount: Amount,
-    target_eth_wallet: [u8; 20],
-) -> Result<EcdsaSignature, ReturnError> {
+    target_eth_wallet: String,
+) -> Result<SelfMintArgs, ReturnError> {
     let _guard = ReentrancyGuard::new();
     let caller = canister_caller();
     let caller_subaccount = subaccount_from_principal(&caller);
+
     let nonce = NONCE_MAP.with(|nonce_map| {
         let mut nonce_map = nonce_map.borrow_mut();
         let nonce = nonce_map.get(&caller_subaccount).unwrap_or(0) + 1;
@@ -212,25 +224,22 @@ pub async fn mint_ckicp(
     }
 
     update_status(msg_id, amount, expiry, MintState::Init);
-    // ICRC-2 transfer
-    let tx_args = icrc2::transfer_from::TransferFromArgs {
-        spender_subaccount: None,
-        from: icrc1::account::Account {
-            owner: caller,
-            subaccount: Some(from_subaccount),
-        },
+
+    // ICRC-1 transfer
+    let tx_args = icrc1::transfer::TransferArg {
+        from_subaccount: Some(caller_subaccount),
         to: icrc1::account::Account {
             owner: canister_id(),
             subaccount: None,
         },
-        amount: Nat::from(amount),
         fee: None,
+        created_at_time: Some(ic_cdk::api::time()),
         memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
-        created_at_time: Some(now),
+        amount: Nat::from(amount),
     };
-    let tx_result: Result<Nat, icrc2::transfer_from::TransferFromError> = canister_call(
+    let tx_result: Result<Nat, icrc1::transfer::TransferError> = canister_call(
         config.ledger_canister_id,
-        "icrc2_transfer_from",
+        "icrc1_transfer",
         tx_args,
         candid::encode_one,
         |r| candid::decode_one(r),
@@ -245,13 +254,51 @@ pub async fn mint_ckicp(
         Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
     }
 
+    // ICRC-2 transfer -> not yet available on ICP ledger
+    // When ICRC-2 becomes available, uncomment the following block (and handle icrc-1 tx failure differently)
+
+    // if icrc1_tx_failed {
+    //     let tx_args = icrc2::transfer_from::TransferFromArgs {
+    //         spender_subaccount: None,
+    //         from: icrc1::account::Account {
+    //             owner: caller,
+    //             subaccount: Some(from_subaccount),
+    //         },
+    //         to: icrc1::account::Account {
+    //             owner: canister_id(),
+    //             subaccount: None,
+    //         },
+    //         amount: Nat::from(amount),
+    //         fee: None,
+    //         memo: Some(icrc1::transfer::Memo::from(msg_id.to_be_bytes().to_vec())),
+    //         created_at_time: Some(now),
+    //     };
+    //     let tx_result: Result<Nat, icrc2::transfer_from::TransferFromError> = canister_call(
+    //         config.ledger_canister_id,
+    //         "icrc2_transfer_from",
+    //         tx_args,
+    //         candid::encode_one,
+    //         |r| candid::decode_one(r),
+    //     )
+    //     .await
+    //     .map_err(|err| ReturnError::InterCanisterCallError(format!("{:?}", err)))?;
+
+    //     match tx_result {
+    //         Ok(_) => {
+    //             update_status(msg_id, amount, expiry, MintState::FundReceived);
+    //         }
+    //         Err(err) => return Err(ReturnError::TransferError(format!("{:?}", err))),
+    //     }
+    // }
+
     // Generate tECDSA signature
     // payload is (amount, to, msgId, expiry, chainId, ckicp_eth_address), 32 bytes each
     let amount_to_transfer = amount - config.ckicp_fee;
     let ckicp_eth_address = hex_decode_0x(&config.ckicp_eth_erc20_address).unwrap();
+
     let mut payload_to_sign: [u8; 192] = [0; 192];
     payload_to_sign[24..32].copy_from_slice(&amount_to_transfer.to_be_bytes());
-    payload_to_sign[44..64].copy_from_slice(&target_eth_wallet);
+    payload_to_sign[44..64].copy_from_slice(&hex_decode_0x_fixed_length(&target_eth_wallet, 20));
     payload_to_sign[80..96].copy_from_slice(&msg_id.to_be_bytes());
     payload_to_sign[120..128].copy_from_slice(&expiry.to_be_bytes());
     payload_to_sign[152..160].copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
@@ -297,7 +344,13 @@ pub async fn mint_ckicp(
     update_status(msg_id, amount, expiry, MintState::Signed);
 
     // Return tECDSA signature
-    Ok(EcdsaSignature::from_signature_v(&signature, v))
+    Ok(SelfMintArgs {
+        amount: amount_to_transfer,
+        to: target_eth_wallet,
+        msgid: msg_id,
+        expiry,
+        signature: EcdsaSignature::from_signature_v(&signature, v).to_string(),
+    })
 }
 
 async fn eth_rpc_call(
@@ -714,6 +767,24 @@ pub async fn update_ckicp_state() -> Result<(), ReturnError> {
         })
         .map(|_| ())
         .map_err(|_| ReturnError::MemoryError)
+}
+
+#[query]
+pub fn get_funding_subaccount() -> icrc1::account::Subaccount {
+    let caller = ic_cdk::api::caller();
+    subaccount_from_principal(&caller)
+}
+
+#[query]
+pub fn get_funding_subaccount_hex() -> String {
+    let caller = ic_cdk::api::caller();
+    hex_encode(&subaccount_from_principal(&caller))
+}
+
+#[query]
+pub fn get_tecdsa_signer_address_hex() -> String {
+    let state: CkicpState = get_ckicp_state();
+    hex_encode(&state.tecdsa_signer_address)
 }
 
 fn main() {}
