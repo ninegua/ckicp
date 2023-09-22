@@ -36,6 +36,33 @@ pub fn hex_decode_0x_u64(s: &str) -> Option<u64> {
     Some(u64::from_be_bytes(bytes))
 }
 
+// Decode hex string ignoring invalid characters, to a fixed byte length.
+// Short strings are pre-padded with 0s, long strings are tail truncated.
+// Decode hex string regardless of whether it has 0x as a prefix.
+// Note that strings without 0x prefix is also treated as hex.
+pub fn hex_decode_0x_fixed_length(s: &str, length_bytes: usize) -> Vec<u8> {
+    let s = if s.starts_with("0x") || s.starts_with("0X") {
+        &s[2..]
+    } else {
+        s
+    };
+    let mut cleaned: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    cleaned.truncate(2 * length_bytes);
+    let zeros_needed = 2 * length_bytes - cleaned.len();
+    if zeros_needed > 0 {
+        let zeros = "0".repeat(zeros_needed);
+        cleaned.insert_str(0, &zeros);
+    }
+    let mut result = Vec::with_capacity(length_bytes);
+    for i in (0..cleaned.len()).step_by(2) {
+        let byte_str = &cleaned[i..i + 2];
+        if let Ok(byte) = u8::from_str_radix(byte_str, 16) {
+            result.push(byte);
+        }
+    }
+    result
+}
+
 // Encode bytes as hex string without 0x prefix.
 pub fn hex_encode(data: &[u8]) -> String {
     const HEX_CHARS: [char; 16] = [

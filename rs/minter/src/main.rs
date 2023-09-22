@@ -177,15 +177,17 @@ pub fn debug_log(level: LogLevel, line: String) -> Result<(), ReturnError> {
 /// MsgId is deterministically computed as xor_nibbles(keccak256(caller, nonce))
 /// and does not need to be returned.
 /// ICP is transferred using ICRC-2 approved transfer
+/// Returns (amount, msgid, expiry, signature)
 #[update]
 pub async fn mint_ckicp(
     from_subaccount: icrc1::account::Subaccount,
     amount: Amount,
-    target_eth_wallet: [u8; 20],
-) -> Result<(u128, u64, String, String, String), ReturnError> {
+    target_eth_wallet: String,
+) -> Result<(u64, u128, u64, String), ReturnError> {
     let _guard = ReentrancyGuard::new();
     let caller = canister_caller();
     let caller_subaccount = subaccount_from_principal(&caller);
+
     let nonce = NONCE_MAP.with(|nonce_map| {
         let mut nonce_map = nonce_map.borrow_mut();
         let nonce = nonce_map.get(&caller_subaccount).unwrap_or(0) + 1;
@@ -250,32 +252,19 @@ pub async fn mint_ckicp(
     let amount_to_transfer = amount - config.ckicp_fee;
     let ckicp_eth_address = hex_decode_0x(&config.ckicp_eth_erc20_address).unwrap();
 
-    //let eip191 = "\x19Ethereum Signed Message:\n".as_bytes();
-    const PREFIX_LEN: usize = 0;
-    let mut payload_to_sign: [u8; 192 + PREFIX_LEN] = [0; 192 + PREFIX_LEN];
-    //payload_to_sign[0..26].copy_from_slice(eip191);
-    //payload_to_sign[26] = 192;
-    payload_to_sign[PREFIX_LEN + 24..PREFIX_LEN + 32]
-        .copy_from_slice(&amount_to_transfer.to_be_bytes());
-    payload_to_sign[PREFIX_LEN + 44..PREFIX_LEN + 64].copy_from_slice(&target_eth_wallet);
-    payload_to_sign[PREFIX_LEN + 80..PREFIX_LEN + 96].copy_from_slice(&msg_id.to_be_bytes());
-    payload_to_sign[PREFIX_LEN + 120..PREFIX_LEN + 128].copy_from_slice(&expiry.to_be_bytes());
-    payload_to_sign[PREFIX_LEN + 152..PREFIX_LEN + 160]
-        .copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
-    payload_to_sign[PREFIX_LEN + 172..PREFIX_LEN + 192].copy_from_slice(&ckicp_eth_address);
-
-    // "debug2(bytes)" works
-    //let payload_to_sign: [u8; 32] = [0; 32];
+    let mut payload_to_sign: [u8; 192] = [0; 192];
+    payload_to_sign[24..32].copy_from_slice(&amount_to_transfer.to_be_bytes());
+    payload_to_sign[44..64].copy_from_slice(&hex_decode_0x_fixed_length(&target_eth_wallet, 20));
+    payload_to_sign[80..96].copy_from_slice(&msg_id.to_be_bytes());
+    payload_to_sign[120..128].copy_from_slice(&expiry.to_be_bytes());
+    payload_to_sign[152..160].copy_from_slice(&config.target_chain_ids[0].to_be_bytes());
+    payload_to_sign[172..192].copy_from_slice(&ckicp_eth_address);
 
     use sha3::Digest;
     let mut hasher = Keccak256::new();
     hasher.update(payload_to_sign);
     let hashed = hasher.finalize();
     let digest = hashed.to_vec();
-
-    // "debug(bytes)" works
-    // let hashed = [0; 32];
-    // let digest = [0; 32].to_vec();
 
     let signature: Vec<u8> = {
         let (res,): (SignWithECDSAReply,) =
@@ -312,10 +301,9 @@ pub async fn mint_ckicp(
 
     // Return tECDSA signature
     Ok((
+        amount_to_transfer,
         msg_id,
         expiry,
-        hex_encode(&payload_to_sign),
-        hex_encode(&hashed),
         EcdsaSignature::from_signature_v(&signature, v).to_string(),
     ))
 }
