@@ -91,7 +91,12 @@ pub fn post_upgrade() {
 }
 
 #[query]
-pub fn get_ckicp_config() -> CkicpConfig {
+#[modifiers("only_owner")]
+pub fn get_config() -> CkicpConfig {
+    get_ckicp_config()
+}
+
+fn get_ckicp_config() -> CkicpConfig {
     CKICP_CONFIG.with(|ckicp_config| {
         let ckicp_config = ckicp_config.borrow();
         ckicp_config.get().0.clone().unwrap()
@@ -477,7 +482,7 @@ pub async fn sync_event_logs() -> Result<(), ReturnError> {
         .next_blocks
         .pop_front()
         .map(|x| format!("{:#x}", x))
-        .unwrap_or_else(|| "safe".to_string());
+        .unwrap_or_else(|| "finalized".to_string());
 
     // get logs between last_block and next_block.
     let json_rpc_payload = json!({
@@ -567,7 +572,7 @@ pub async fn sync_event_logs() -> Result<(), ReturnError> {
             let logs: Value = serde_json::from_slice(&bytes)
                 .map_err(|err| ReturnError::JsonParseError(err.to_string()))?;
             // Find the highest block number from log. This is an estimate since
-            // we don't know the block number of the latest "safe" block.
+            // we don't know the block number of the latest "finalized" block.
             let last_block = last_block_number_from_event_logs(&logs);
             process_logs(logs).await?;
             CKICP_STATE.with(|ckicp_state| {
