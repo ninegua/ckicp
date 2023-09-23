@@ -776,9 +776,13 @@ pub fn get_funding_subaccount() -> icrc1::account::Subaccount {
 }
 
 #[query]
-pub fn get_funding_subaccount_hex() -> String {
+pub fn get_funding_account() -> String {
     let caller = ic_cdk::api::caller();
-    hex_encode(&subaccount_from_principal(&caller))
+    icrc1::account::Account {
+        owner: ic_cdk::api::id(),
+        subaccount: Some(subaccount_from_principal(&caller)),
+    }
+    .to_string()
 }
 
 #[query]

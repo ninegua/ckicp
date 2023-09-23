@@ -86,11 +86,11 @@ service : () -> {
   get_ckicp_config : () -> (CkicpConfig) query;
   get_ckicp_state : () -> (CkicpState) query;
   get_funding_subaccount : () -> (vec nat8) query;
-  get_funding_subaccount_hex : () -> (text) query;
+  get_funding_account : () -> (text) query;
   get_nonce : () -> (nat32) query;
   get_signature : (nat) -> (opt EcdsaSignature) query;
   get_tecdsa_signer_address_hex : () -> (text) query;
-  mint_ckicp : (vec nat8, nat64, vec nat8) -> (Result);
+  mint_ckicp : (vec nat8, nat64, text) -> (Result);
   process_block : (text) -> (Result_1);
   set_ckicp_config : (CkicpConfig) -> (Result_1);
   update_ckicp_state : () -> (Result_1);
