@@ -37,7 +37,7 @@ pub struct CkicpState {
     pub tecdsa_signer_address: [u8; 20],
     pub total_icp_locked: Amount,
     pub last_block: u64,
-    pub next_blocks: std::collections::VecDeque<u64>,
+    pub next_block: Option<u64>,
 }
 
 #[derive(

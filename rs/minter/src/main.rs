@@ -479,8 +479,8 @@ pub async fn sync_event_logs() -> Result<(), ReturnError> {
     let config: CkicpConfig = get_ckicp_config();
     let mut state: CkicpState = get_ckicp_state();
     let next_block = state
-        .next_blocks
-        .pop_front()
+        .next_block
+        .take()
         .map(|x| format!("{:#x}", x))
         .unwrap_or_else(|| "finalized".to_string());
 
@@ -561,7 +561,7 @@ pub async fn sync_event_logs() -> Result<(), ReturnError> {
                 let mut ckicp_state = ckicp_state.borrow_mut();
                 let mut state = ckicp_state.get().0.clone();
                 if let Some(s) = state.as_mut() {
-                    s.next_blocks.push_front(last_block);
+                    s.next_block = Some(last_block);
                 };
                 ckicp_state.set(Cbor(state)).unwrap();
             });
@@ -571,15 +571,15 @@ pub async fn sync_event_logs() -> Result<(), ReturnError> {
         Ok(bytes) => {
             let logs: Value = serde_json::from_slice(&bytes)
                 .map_err(|err| ReturnError::JsonParseError(err.to_string()))?;
-            // Find the highest block number from log. This is an estimate since
-            // we don't know the block number of the latest "finalized" block.
+            // Find the highest block number from log, remember it in state so
+            // that next time we fetch from this number onwards.
             let last_block = last_block_number_from_event_logs(&logs);
             process_logs(logs).await?;
             CKICP_STATE.with(|ckicp_state| {
                 let mut ckicp_state = ckicp_state.borrow_mut();
                 let mut state = ckicp_state.get().0.clone();
                 if let Some(s) = state.as_mut() {
-                    if let Some(last_block) = s.next_blocks.pop_front() {
+                    if let Some(last_block) = s.next_block.take() {
                         s.last_block = last_block;
                     } else if let Some(last_block) = last_block {
                         s.last_block = last_block;
