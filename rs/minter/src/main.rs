@@ -779,7 +779,7 @@ pub fn get_funding_subaccount() -> icrc1::account::Subaccount {
 pub fn get_funding_account() -> String {
     let caller = ic_cdk::api::caller();
     icrc1::account::Account {
-        owner: Principal::from_text("gyfmy-eqaaa-aaaar-qabza-cai").unwrap(),
+        owner: ic_cdk::api::id(),
         subaccount: Some(subaccount_from_principal(&caller)),
     }
     .to_string()
