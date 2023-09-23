@@ -298,7 +298,7 @@ pub async fn mint_ckicp(
 
     // Generate tECDSA signature
     // payload is (amount, to, msgId, expiry, chainId, ckicp_eth_address), 32 bytes each
-    let amount_to_transfer = amount - config.ckicp_fee;
+    let amount_to_transfer = amount;
     let ckicp_eth_address = hex_decode_0x(&config.ckicp_eth_erc20_address).unwrap();
 
     let mut payload_to_sign: [u8; 192] = [0; 192];
