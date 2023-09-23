@@ -90,7 +90,7 @@ service : () -> {
   get_nonce : () -> (nat32) query;
   get_signature : (nat) -> (opt EcdsaSignature) query;
   get_tecdsa_signer_address_hex : () -> (text) query;
-  mint_ckicp : (vec nat8, nat64, vec nat8) -> (Result);
+  mint_ckicp : (vec nat8, nat64, text) -> (Result);
   process_block : (text) -> (Result_1);
   set_ckicp_config : (CkicpConfig) -> (Result_1);
   update_ckicp_state : () -> (Result_1);
